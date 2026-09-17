@@ -115,13 +115,14 @@ export async function getInvoiceSignedUrl(pdfPath: string) {
 export function useLedger() {
   const { user } = useAuth()
   return useQuery({
-    queryKey: ['ledger_entries', user?.id],
+    queryKey: ['dealer_ledger', user?.id],
     enabled: !!user,
     queryFn: async () => {
+      // Scoped by RLS to the GSTIN on this profile - there is no dealer_id to
+      // filter on, because the entries come from Focus, not from a signup.
       const { data, error } = await supabase
-        .from('ledger_entries')
+        .from('dealer_ledger')
         .select('*')
-        .eq('dealer_id', user!.id)
         .order('entry_date', { ascending: true })
       if (error) throw error
       return data

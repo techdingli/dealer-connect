@@ -93,6 +93,21 @@ export type LedgerEntry = {
   created_at: string
 }
 
+// Derived from Focus and keyed by GSTIN, not dealer_id: the entries exist
+// before a dealer signs up, and RLS matches them to profiles.gstin.
+export type DealerLedgerEntry = {
+  body_id: number
+  gstin: string
+  focus_account_id: number | null
+  entry_date: string
+  voucher_no: string | null
+  voucher_type: string | null
+  description: string | null
+  debit: number
+  credit: number
+  synced_at: string
+}
+
 export type Feedback = {
   id: string
   dealer_id: string
@@ -151,6 +166,7 @@ export type Database = {
       invoices: Table<Invoice, Partial<Invoice>>
       invoice_items: Table<InvoiceItem, Partial<InvoiceItem>>
       ledger_entries: Table<LedgerEntry, Partial<LedgerEntry>>
+      dealer_ledger: Table<DealerLedgerEntry, Partial<DealerLedgerEntry>>
       feedback: Table<Feedback, Partial<Feedback>>
       service_requests: Table<ServiceRequest, Partial<ServiceRequest>>
       catalogs: Table<Catalog, Partial<Catalog>>
