@@ -104,6 +104,27 @@ Routing uses `BrowserRouter` for clean URLs (no `/#/` prefix) — `vercel.json`'
 sends every path to `index.html` so client-side routes don't 404 on a hard refresh or
 direct link.
 
+### Why Supabase is proxied through `/sb`
+
+Set `VITE_SUPABASE_URL` to `/sb`, not to the project's `.supabase.co` URL.
+
+Indian ISPs have twice been ordered by MeitY to block DNS resolution for `*.supabase.co`
+under the IT Act — nationally for eight days in February 2026, and again from
+17 September 2026. Jio, Airtel and ACT redirect the whole domain to a block server that
+resets TLS, so `supabase-js` fails with a bare `NetworkError` and dealers behind those
+ISPs just see a broken portal. `vercel.json` rewrites `/sb/*` to the project so the
+blocked hostname never enters the browser's DNS; Vercel's own network reaches Supabase
+normally. That rewrite must stay **above** the `index.html` catch-all, which matches
+everything, and `vercel.json` takes no comment keys — Vercel rejects unknown properties
+and the deploy fails validation.
+
+A leading slash resolves against the page origin (`src/lib/supabase.ts`). Vite inlines
+the value at build time, so changing it needs a rebuild, not just an env change. For
+local `npm run dev` on a blocked network, point `.env.local` at the deployed proxy
+instead — `https://<your-app>.vercel.app/sb` — since the dev server has no rewrite and
+can't reach Supabase directly either. Vercel rewrites don't carry WebSockets, so
+Supabase Realtime would need a different route; nothing here uses it.
+
 ## Data model & security
 
 Every table has Row Level Security enabled (see `supabase/migrations/`):
