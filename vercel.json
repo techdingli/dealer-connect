@@ -1,3 +1,10 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "comment": "Supabase, proxied through this origin. Some Indian ISPs redirect *.supabase.co to a dead address, which breaks login and every query for anyone behind them - dealers included. Requests to the app's own domain are unaffected, and Vercel reaches Supabase normally. Must stay above the SPA fallback: rewrites are matched in order.",
+      "source": "/sb/:path*",
+      "destination": "https://hehrynjgpmdpbfgdxnvn.supabase.co/:path*"
+    },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
