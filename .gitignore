@@ -29,3 +29,12 @@ dist-ssr
 # Never track hosting/DB backups accidentally dropped in this folder
 backup-*.tar.gz
 backup-*/
+
+.vercel
+.env*
+
+# Real dealer financial/PII data - this repo is public, never commit these.
+# See PENDING_TASKS.md for what to do with them.
+focus-ledger-resync.sql
+Focus Ledger.xlsx
+focus-sync-data-*.zip
