@@ -2,6 +2,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import type { Feedback, FeedbackCategory, ServicePriority } from '@/types/database'
+import { DEMO_MODE } from '@/config/demo'
+import { DEMO_CATALOGS, DEMO_DINGLI_STOCK, DEMO_MACHINES, DEMO_PRODUCTS } from '@/lib/demo/catalog'
+import { addDemoFeedback, addDemoServiceRequest, getDemoDataset } from '@/lib/demo/dataset'
+
+// Every hook below has the same shape: when DEMO_MODE is on it returns
+// generated data and never touches Supabase; otherwise it runs the real query.
+// Flipping VITE_DEMO_MODE=false restores the live paths wholesale — see
+// @/config/demo.
 
 // ---------------------------------------------------------------------------
 // Reference data (shared across all dealers)
@@ -9,8 +17,10 @@ import type { Feedback, FeedbackCategory, ServicePriority } from '@/types/databa
 
 export function useProducts() {
   return useQuery({
-    queryKey: ['products'],
+    queryKey: ['products', DEMO_MODE],
     queryFn: async () => {
+      if (DEMO_MODE) return DEMO_PRODUCTS
+
       const { data, error } = await supabase
         .from('products')
         .select('*')
@@ -25,8 +35,10 @@ export function useProducts() {
 
 export function useDingliStock() {
   return useQuery({
-    queryKey: ['dingli_stock'],
+    queryKey: ['dingli_stock', DEMO_MODE],
     queryFn: async () => {
+      if (DEMO_MODE) return DEMO_DINGLI_STOCK
+
       const { data, error } = await supabase
         .from('dingli_stock')
         .select('*, product:products(*)')
@@ -39,8 +51,16 @@ export function useDingliStock() {
 
 export function useMachines() {
   return useQuery({
-    queryKey: ['machines'],
+    queryKey: ['machines', DEMO_MODE],
     queryFn: async () => {
+      if (DEMO_MODE) {
+        return DEMO_MACHINES.map((m) => ({
+          model_name: m.model_name,
+          category: m.category,
+          manual_text: m.manual_text,
+        }))
+      }
+
       const { data, error } = await supabase
         .from('machines')
         .select('model_name, category, manual_text')
@@ -61,8 +81,10 @@ export function useMachines() {
 
 export function useCatalogs() {
   return useQuery({
-    queryKey: ['catalogs'],
+    queryKey: ['catalogs', DEMO_MODE],
     queryFn: async () => {
+      if (DEMO_MODE) return DEMO_CATALOGS
+
       const { data, error } = await supabase.from('catalogs').select('*').order('created_at', { ascending: false })
       if (error) throw error
       return data
@@ -70,7 +92,9 @@ export function useCatalogs() {
   })
 }
 
-export function getCatalogDownloadUrl(filePath: string) {
+/** Null in demo mode — there are no files behind the generated catalog rows. */
+export function getCatalogDownloadUrl(filePath: string): string | null {
+  if (DEMO_MODE) return null
   return supabase.storage.from('catalogs').getPublicUrl(filePath).data.publicUrl
 }
 
@@ -84,6 +108,8 @@ export function useDealerStock() {
     queryKey: ['dealer_stock', user?.id],
     enabled: !!user,
     queryFn: async () => {
+      if (DEMO_MODE) return getDemoDataset(user!.id).dealerStock
+
       const { data, error } = await supabase
         .from('dealer_stock')
         .select('*, product:products(*)')
@@ -101,6 +127,8 @@ export function useInvoices() {
     queryKey: ['invoices', user?.id],
     enabled: !!user,
     queryFn: async () => {
+      if (DEMO_MODE) return getDemoDataset(user!.id).invoices
+
       const { data, error } = await supabase
         .from('invoices')
         .select('*, invoice_items(*)')
@@ -118,6 +146,12 @@ export function useInvoiceDetail(invoiceId: string | null) {
     queryKey: ['invoice', invoiceId],
     enabled: !!user && !!invoiceId,
     queryFn: async () => {
+      if (DEMO_MODE) {
+        const invoice = getDemoDataset(user!.id).invoices.find((i) => i.id === invoiceId)
+        if (!invoice) throw new Error('Invoice not found')
+        return invoice
+      }
+
       const { data, error } = await supabase
         .from('invoices')
         .select('*, invoice_items(*)')
@@ -142,6 +176,8 @@ export function useLedger() {
     queryKey: ['dealer_ledger', user?.id],
     enabled: !!user,
     queryFn: async () => {
+      if (DEMO_MODE) return getDemoDataset(user!.id).ledger
+
       // Scoped by RLS to the GSTIN on this profile - there is no dealer_id to
       // filter on, because the entries come from Focus, not from a signup.
       const { data, error } = await supabase
@@ -160,6 +196,9 @@ export function useFeedbackList() {
     queryKey: ['feedback', user?.id],
     enabled: !!user,
     queryFn: async () => {
+      // Copied so react-query sees a new reference after a demo submission.
+      if (DEMO_MODE) return [...getDemoDataset(user!.id).feedback]
+
       const { data, error } = await supabase
         .from('feedback')
         .select('*')
@@ -177,6 +216,14 @@ export function useSubmitFeedback() {
   return useMutation({
     mutationFn: async (input: { category: FeedbackCategory; subject: string; message: string }) => {
       if (!user) throw new Error('Not signed in')
+
+      // Demo submissions live in memory for the session only — they're gone on
+      // reload, which is the honest behaviour when there's no backend.
+      if (DEMO_MODE) {
+        addDemoFeedback(user.id, input)
+        return
+      }
+
       const { error } = await supabase.from('feedback').insert({
         dealer_id: user.id,
         category: input.category,
@@ -197,6 +244,8 @@ export function useServiceRequests() {
     queryKey: ['service_requests', user?.id],
     enabled: !!user,
     queryFn: async () => {
+      if (DEMO_MODE) return [...getDemoDataset(user!.id).serviceRequests]
+
       const { data, error } = await supabase
         .from('service_requests')
         .select('*')
@@ -219,6 +268,17 @@ export function useSubmitServiceRequest() {
       priority: ServicePriority
     }) => {
       if (!user) throw new Error('Not signed in')
+
+      if (DEMO_MODE) {
+        addDemoServiceRequest(user.id, {
+          machine_model: input.machineModel,
+          serial_number: input.serialNumber || null,
+          issue_description: input.issueDescription,
+          priority: input.priority,
+        })
+        return
+      }
+
       const { error } = await supabase.from('service_requests').insert({
         dealer_id: user.id,
         machine_model: input.machineModel,

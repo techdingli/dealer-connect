@@ -8,13 +8,14 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
 import { Logo } from '@/components/Logo'
+import { DealerLogo } from '@/components/DealerLogo'
 import { useAuth } from '@/context/AuthContext'
 import { useInvoices, useInvoiceDetail, getInvoiceSignedUrl } from '@/hooks/queries'
 import { formatCurrencyINR, formatDate, CURRENT_FY } from '@/lib/utils'
 import type { Invoice } from '@/types/database'
 
 export default function InvoiceHistory() {
-  const { profile } = useAuth()
+  const { profile, dealer, isDemo } = useAuth()
   const { data: invoices, isLoading } = useInvoices()
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [detailsInvoice, setDetailsInvoice] = useState<Invoice | null>(null)
@@ -29,7 +30,11 @@ export default function InvoiceHistory() {
 
   async function handleDownload(id: string, pdfPath: string | null) {
     if (!pdfPath) {
-      toast.error('No PDF is attached to this invoice yet.')
+      toast.info(
+        isDemo
+          ? 'PDF downloads are switched off in demo mode — use Print to save this invoice.'
+          : 'No PDF is attached to this invoice yet.',
+      )
       return
     }
     setDownloadingId(id)
@@ -228,7 +233,8 @@ export default function InvoiceHistory() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-base-400 print:text-black/60">
                     Billed to
                   </p>
-                  <p className="mt-1 font-medium text-base-50 print:text-black">
+                  {dealer && <DealerLogo dealer={dealer} size="md" className="mt-2" />}
+                  <p className="mt-1.5 font-medium text-base-50 print:text-black">
                     {profile?.company_name || profile?.dealer_name || 'Your dealership'}
                   </p>
                   {profile?.company_name && profile?.dealer_name && (

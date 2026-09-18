@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { Forklift, ShieldCheck, Wrench, Receipt } from 'lucide-react'
 import { Logo } from '@/components/Logo'
+import { DEMO_MODE } from '@/config/demo'
+import { DemoModeBadge } from '@/components/DemoModeNotice'
 
 export function AuthLayout({
   title,
@@ -26,8 +28,13 @@ export function AuthLayout({
           <div className="absolute bottom-0 right-1/4 size-80 animate-float rounded-full bg-green-600/20 blur-3xl [animation-delay:-3s]" />
         </div>
 
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative">
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="relative flex items-center gap-3"
+        >
           <Logo forceScheme="dark" />
+          <DemoModeBadge />
         </motion.div>
 
         <motion.div
@@ -72,14 +79,17 @@ export function AuthLayout({
           className="relative flex items-center gap-2 text-xs text-base-400"
         >
           <ShieldCheck className="size-4 text-emerald-400" />
-          Secured by Supabase Auth · Row-level data isolation per dealer
+          {DEMO_MODE
+            ? 'Preview build · Sample data only — nothing here is a live account'
+            : 'Secured by Supabase Auth · Row-level data isolation per dealer'}
         </motion.div>
       </div>
 
       {/* Form panel */}
       <div className="flex w-full flex-col items-center justify-center px-6 py-12 lg:w-1/2">
-        <div className="mb-8 lg:hidden">
+        <div className="mb-8 flex items-center gap-3 lg:hidden">
           <Logo />
+          <DemoModeBadge />
         </div>
 
         <motion.div

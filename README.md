@@ -30,16 +30,69 @@ replace it — deployed separately (Render/Railway/Fly.io/etc., not Vercel, sinc
 Python as short-lived serverless functions rather than a persistent process), called by the
 frontend only for those specific operations.
 
+## Demo mode
+
+The portal currently ships in **demo mode**, driven by a single environment variable:
+
+```
+VITE_DEMO_MODE=true    # default when the variable is unset
+```
+
+With it on:
+
+- **Login is a dealership dropdown**, not email/password. There are no accounts to
+  provision and Supabase Auth is never called.
+- **Every figure is generated** — stock, invoices, ledger, service tickets, feedback —
+  seeded from the selected dealer's id, so each dealership gets its own distinct but
+  stable account, and nothing real is ever fetched. The ledger is derived from the
+  generated invoices, so the two pages reconcile.
+- **Dealership name and logo are the only real data.** All 17 dealers from the Dingli
+  India dealer list are in `src/config/dealers.ts`; 16 have logos in
+  `src/assets/dealers/`. Contact names, phone numbers and emails from that list are
+  deliberately *not* in this repo, which is public.
+
+### Why the dealer list isn't read from Supabase
+
+The login dropdown has to render *before* anyone signs in, and `profiles` is correctly
+locked down by RLS to `id = auth.uid()` — an anonymous visitor can read nothing from it.
+Populating the dropdown from the database would mean adding a new table or view readable
+by the `anon` role. Supabase also holds no logos: there's no column for one and no
+storage bucket, so the images have to be bundled regardless.
+
+In **live mode** the dealer's identity does come from Supabase — `profiles.company_name`
+and `dealer_name`, as it always has. `findDealerByName()` matches that against the
+bundled registry (ignoring case, punctuation and legal suffixes, so "AHUJA CORPORATION
+PRIVATE LIMITED" and "Ahuja Corporation Pvt. Ltd." both resolve) purely to attach the
+right logo and city. It returns null when nothing matches, and the UI falls back to the
+monogram — a wrong logo on an invoice would be worse than none.
+
+If you'd rather the list came from the database, the pieces needed are: a
+`dealer_directory`-style table with an `anon`-readable select policy, a `logo_path`
+column, and a public storage bucket holding the logos. Worth noting that two dealers
+(Maruti, Advent) have no GSTIN and so have no `dealer_directory` row today — see
+`PENDING_TASKS.md` — so a database-driven dropdown would currently be missing them.
+- **The assistant answers locally** from the same generated data instead of calling
+  `/api/chat`, which would otherwise query Supabase with a real access token.
+- "Demo Mode" is labelled on the login screen, the dashboard and the top bar.
+
+To go live, set `VITE_DEMO_MODE=false` in the Vercel project settings (or `.env.local`)
+and redeploy. Every demo branch keys off `DEMO_MODE` in `src/config/demo.ts`, so the
+real Supabase paths come straight back — including credential login and `/signup`. A
+demo dealer left in `localStorage` grants no access once the flag is off.
+
 ## Project structure
 
 ```
 src/
   components/       Shared UI (Button, Card, Badge, Modal, Sidebar, Topbar, AppShell, ...)
-  context/          AuthContext (Supabase session/profile) + ThemeContext (light/dark)
+  config/           demo.ts (the DEMO_MODE flag), dealers.ts (the 17 dealers + logos), nav.ts
+  context/          AuthContext (Supabase session/profile, or the demo dealer) + ThemeContext
+  lib/demo/         Demo-mode data: seeded RNG, shared catalog, per-dealer dataset, assistant
   hooks/queries.ts  All TanStack Query hooks (reads) + mutations (feedback, service requests)
-  lib/              supabase client, cn()/formatting utils
+  lib/              supabase client, cn()/formatting utils, csv export
   pages/            One file per route (Dashboard, PriceList, DingliStock, InvoiceHistory, ...)
   types/database.ts Hand-written mirror of the Supabase schema (see note in the file)
+  assets/dealers/   Dealer logos, trimmed and size-capped (16 of 17 dealers)
 supabase/
   migrations/0001_init.sql        Core schema + RLS policies + storage buckets
   migrations/0002_invoice_items.sql  Invoice line-item breakdown (powers "View Details")

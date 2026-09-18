@@ -43,7 +43,9 @@ export function StatCard({
           </div>
           <div className="min-w-0">
             <p className="truncate text-xs font-medium uppercase tracking-wide text-base-300">{label}</p>
-            <p className="mt-0.5 truncate font-display text-xl font-semibold text-base-50">{value}</p>
+            {/* Deliberately not `truncate`: a clipped currency figure ("₹10,12,23,100…")
+                reads as a real number and misinforms. Wrapping is the safer failure. */}
+            <p className="mt-0.5 font-display text-xl font-semibold tabular-nums text-base-50">{value}</p>
           </div>
         </div>
       </Card>

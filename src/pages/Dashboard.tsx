@@ -6,8 +6,10 @@ import { StatCard } from '@/components/ui/StatCard'
 import { Card } from '@/components/ui/Card'
 import { useAuth } from '@/context/AuthContext'
 import { useDealerStock, useInvoices, useServiceRequests, useProducts } from '@/hooks/queries'
-import { formatCurrencyINR, CURRENT_FY } from '@/lib/utils'
+import { formatCurrencyShortINR, CURRENT_FY } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { DealerLogo } from '@/components/DealerLogo'
+import { DemoModeBanner } from '@/components/DemoModeNotice'
 
 const QUICK_LINKS = [
   { to: '/price-list', label: 'Price List', description: 'Browse the full Dingli product catalog & pricing', icon: Tags },
@@ -21,7 +23,7 @@ const QUICK_LINKS = [
 ]
 
 export default function Dashboard() {
-  const { profile, user } = useAuth()
+  const { profile, user, dealer } = useAuth()
   const { data: products, isLoading: productsLoading } = useProducts()
   const { data: dealerStock, isLoading: stockLoading } = useDealerStock()
   const { data: invoices, isLoading: invoicesLoading } = useInvoices()
@@ -35,10 +37,13 @@ export default function Dashboard() {
 
   return (
     <div>
+      <DemoModeBanner className="mb-6" />
+
       <PageHeader
         eyebrow={CURRENT_FY}
         title={`Welcome back, ${displayName}`}
         description={`Here's a snapshot of your ${profile?.company_name ?? 'dealership'}'s account with Dingli India.`}
+        action={dealer ? <DealerLogo dealer={dealer} size="lg" /> : undefined}
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -50,7 +55,7 @@ export default function Dashboard() {
         {invoicesLoading ? (
           <Skeleton className="h-24" />
         ) : (
-          <StatCard icon={Receipt} label={`Invoiced (${CURRENT_FY})`} value={formatCurrencyINR(totalInvoiceValue)} tone="orange" delay={0.05} />
+          <StatCard icon={Receipt} label={`Invoiced (${CURRENT_FY})`} value={formatCurrencyShortINR(totalInvoiceValue)} tone="orange" delay={0.05} />
         )}
         {invoicesLoading ? (
           <Skeleton className="h-24" />

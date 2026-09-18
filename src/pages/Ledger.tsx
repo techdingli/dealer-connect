@@ -6,7 +6,7 @@ import { StatCard } from '@/components/ui/StatCard'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { useLedger } from '@/hooks/queries'
-import { formatCurrencyINR, formatDate, CURRENT_FY } from '@/lib/utils'
+import { formatCurrencyINR, formatCurrencyShortINR, formatDate, CURRENT_FY } from '@/lib/utils'
 
 export default function Ledger() {
   const { data: entries, isLoading } = useLedger()
@@ -40,9 +40,9 @@ export default function Ledger() {
       />
 
       <div className="mb-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={ScrollText} label="Total Debit" value={formatCurrencyINR(totalDebit)} tone="orange" />
-        <StatCard icon={ScrollText} label="Total Credit" value={formatCurrencyINR(totalCredit)} tone="green" delay={0.05} />
-        <StatCard icon={Wallet} label="Closing Balance" value={formatCurrencyINR(closingBalance)} tone="orange" delay={0.1} />
+        <StatCard icon={ScrollText} label="Total Debit" value={formatCurrencyShortINR(totalDebit)} tone="orange" />
+        <StatCard icon={ScrollText} label="Total Credit" value={formatCurrencyShortINR(totalCredit)} tone="green" delay={0.05} />
+        <StatCard icon={Wallet} label="Closing Balance" value={formatCurrencyShortINR(closingBalance)} tone="orange" delay={0.1} />
         <StatCard icon={ScrollText} label="Entries" value={String(entries?.length ?? 0)} tone="green" delay={0.15} />
       </div>
 

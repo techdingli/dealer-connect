@@ -1,19 +1,26 @@
 import { useState } from 'react'
-import { Menu, LogOut, ChevronDown, UserRound } from 'lucide-react'
+import { Menu, LogOut, ChevronDown, UserRound, Repeat2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '@/context/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { DealerLogo } from '@/components/DealerLogo'
+import { DemoModeBadge } from '@/components/DemoModeNotice'
 
 export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
-  const { profile, user, signOut } = useAuth()
+  const { profile, user, dealer, isDemo, signOut } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
   const navigate = useNavigate()
 
   async function handleSignOut() {
     await signOut()
     toast.success('Signed out successfully')
+    navigate('/login')
+  }
+
+  async function handleSwitchDealer() {
+    await signOut()
     navigate('/login')
   }
 
@@ -29,10 +36,17 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         <Menu className="size-5" />
       </button>
 
-      <div className="hidden sm:block">
+      <div className="hidden items-center gap-3 sm:flex">
         <p className="text-sm text-base-300">
           Welcome back, <span className="font-medium text-base-50">{displayName}</span>
         </p>
+        <DemoModeBadge />
+      </div>
+
+      {/* Phones lose the greeting but keep the demo flag — it should never be
+          possible to look at this portal and not know the data is generated. */}
+      <div className="sm:hidden">
+        <DemoModeBadge />
       </div>
 
       <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
@@ -43,9 +57,13 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
             onClick={() => setMenuOpen((v) => !v)}
             className="flex items-center gap-2 rounded-xl border border-base-600 bg-base-800/60 py-1.5 pl-1.5 pr-2 sm:pr-2.5"
           >
-            <div className="flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500/25 to-green-500/25 text-orange-300">
-              <UserRound className="size-4" />
-            </div>
+            {dealer ? (
+              <DealerLogo dealer={dealer} size="sm" />
+            ) : (
+              <div className="flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500/25 to-green-500/25 text-orange-300">
+                <UserRound className="size-4" />
+              </div>
+            )}
             <span className="hidden max-w-[120px] truncate text-sm font-medium text-base-100 sm:inline">
               {displayName}
             </span>
@@ -61,12 +79,30 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -6, scale: 0.97 }}
                   transition={{ duration: 0.15 }}
-                  className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-xl border border-base-600 bg-base-800 shadow-xl"
+                  className="absolute right-0 z-20 mt-2 w-60 overflow-hidden rounded-xl border border-base-600 bg-base-800 shadow-xl"
                 >
-                  <div className="border-b border-base-600 px-3.5 py-3">
-                    <p className="truncate text-sm font-medium text-base-50">{profile?.company_name || displayName}</p>
-                    <p className="truncate text-xs text-base-400">{user?.email}</p>
+                  <div className="flex items-center gap-3 border-b border-base-600 px-3.5 py-3">
+                    {dealer && <DealerLogo dealer={dealer} size="md" className="h-10 w-10" />}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-base-50">
+                        {profile?.company_name || displayName}
+                      </p>
+                      <p className="truncate text-xs text-base-400">
+                        {dealer ? `${dealer.city}, ${dealer.state}` : user?.email}
+                      </p>
+                    </div>
                   </div>
+
+                  {isDemo && (
+                    <button
+                      onClick={handleSwitchDealer}
+                      className="flex w-full items-center gap-2 px-3.5 py-2.5 text-sm text-base-100 hover:bg-base-700"
+                    >
+                      <Repeat2 className="size-4 text-base-400" />
+                      Switch dealership
+                    </button>
+                  )}
+
                   <button
                     onClick={handleSignOut}
                     className="flex w-full items-center gap-2 px-3.5 py-2.5 text-sm text-red-400 hover:bg-base-700"

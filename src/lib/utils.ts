@@ -13,6 +13,16 @@ export function formatCurrencyINR(value: number) {
   }).format(value)
 }
 
+/** Whole rupees, no paise — for stat tiles, where ".00" costs three characters
+ *  of width and tells the reader nothing. Tables keep the full precision. */
+export function formatCurrencyShortINR(value: number) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
 export function formatDate(value: string | Date) {
   const date = typeof value === 'string' ? new Date(value) : value
   return new Intl.DateTimeFormat('en-IN', {

@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute, PublicOnlyRoute } from '@/components/ProtectedRoute'
+import { DEMO_MODE } from '@/config/demo'
 
 const Login = lazy(() => import('@/pages/auth/Login'))
 const Signup = lazy(() => import('@/pages/auth/Signup'))
@@ -31,7 +32,9 @@ export default function App() {
       <Routes>
         <Route element={<PublicOnlyRoute />}>
           <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
+          {/* Demo mode has no account creation — the login dropdown is the only
+              way in, so /signup folds back into it. */}
+          <Route path="/signup" element={DEMO_MODE ? <Navigate to="/login" replace /> : <Signup />} />
         </Route>
 
         <Route element={<ProtectedRoute />}>

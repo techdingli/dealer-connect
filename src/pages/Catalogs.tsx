@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { toast } from 'sonner'
 import { BookMarked, Download, FileText } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card } from '@/components/ui/Card'
@@ -8,10 +9,41 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { useCatalogs, getCatalogDownloadUrl } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
 
+const downloadClasses =
+  'mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 ' +
+  'px-4 py-2.5 text-sm font-medium text-white shadow-glow-orange transition-all hover:brightness-110 active:scale-[0.97]'
+
 function formatFileSize(bytes: number | null) {
   if (!bytes) return null
   const mb = bytes / (1024 * 1024)
   return `${mb.toFixed(1)} MB`
+}
+
+/* In demo mode the catalog rows are generated and there are no files behind
+ * them, so there is nothing to link to — say so rather than handing over a
+ * dead link. */
+function CatalogDownload({ filePath }: { filePath: string }) {
+  const url = getCatalogDownloadUrl(filePath)
+
+  if (!url) {
+    return (
+      <button
+        type="button"
+        onClick={() => toast.info('Catalog downloads are switched off in demo mode.')}
+        className={downloadClasses}
+      >
+        <Download className="size-4" />
+        Download
+      </button>
+    )
+  }
+
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className={downloadClasses}>
+      <Download className="size-4" />
+      Download
+    </a>
+  )
 }
 
 export default function Catalogs() {
@@ -55,15 +87,7 @@ export default function Catalogs() {
                   <span>{formatDate(c.created_at)}</span>
                   {formatFileSize(c.file_size) && <span>{formatFileSize(c.file_size)}</span>}
                 </div>
-                <a
-                  href={getCatalogDownloadUrl(c.file_path)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 px-4 py-2.5 text-sm font-medium text-white shadow-glow-orange transition-all hover:brightness-110 active:scale-[0.97]"
-                >
-                  <Download className="size-4" />
-                  Download
-                </a>
+                <CatalogDownload filePath={c.file_path} />
               </Card>
             </motion.div>
           ))}

@@ -29,6 +29,10 @@ dist-ssr
 # Never track hosting/DB backups accidentally dropped in this folder
 backup-*.tar.gz
 backup-*/
+public_html.tar.gz
+
+# Supabase CLI scratch state
+supabase/.temp/
 
 .vercel
 .env*
