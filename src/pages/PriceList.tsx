@@ -6,29 +6,39 @@ import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
+import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
+import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useProducts } from '@/hooks/queries'
 import { formatCurrencyINR } from '@/lib/utils'
+import type { Product } from '@/types/database'
 
 export default function PriceList() {
   const { data: products, isLoading } = useProducts()
   const [search, setSearch] = useState('')
-  const [category, setCategory] = useState<string>('all')
 
-  const categories = useMemo(() => {
-    const set = new Set((products ?? []).map((p) => p.category).filter(Boolean) as string[])
-    return ['all', ...Array.from(set)]
-  }, [products])
+  // The search box spans several columns at once, which a per-column filter
+  // can't do — so it runs first, and the column filters narrow what it returns.
+  const searched = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return products ?? []
+    return (products ?? []).filter(
+      (p) => p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query),
+    )
+  }, [products, search])
 
-  const filtered = useMemo(() => {
-    return (products ?? []).filter((p) => {
-      const matchesCategory = category === 'all' || p.category === category
-      const matchesSearch =
-        !search ||
-        p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.sku.toLowerCase().includes(search.toLowerCase())
-      return matchesCategory && matchesSearch
-    })
-  }, [products, search, category])
+  const columns = useMemo<ColumnDef<Product>[]>(
+    () => [
+      { id: 'sku', label: 'SKU', type: 'text', accessor: (p) => p.sku },
+      { id: 'name', label: 'Product', type: 'text', accessor: (p) => p.name },
+      { id: 'category', label: 'Category', type: 'select', accessor: (p) => p.category },
+      { id: 'unit', label: 'Unit', type: 'select', accessor: (p) => p.unit },
+      { id: 'price', label: 'Price', type: 'number', accessor: (p) => p.price },
+    ],
+    [],
+  )
+
+  const table = useTableFilters(searched, columns)
+  const filtered = table.filteredRows
 
   return (
     <div>
@@ -49,28 +59,16 @@ export default function PriceList() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <div className="flex flex-wrap gap-2">
-            {categories.map((c) => (
-              <button
-                key={c}
-                onClick={() => setCategory(c)}
-                className={
-                  'rounded-full border px-3 py-1.5 text-xs font-medium capitalize transition-colors ' +
-                  (category === c
-                    ? 'border-orange-500/40 bg-orange-500/15 text-orange-300'
-                    : 'border-base-600 text-base-300 hover:border-base-400')
-                }
-              >
-                {c === 'all' ? 'All categories' : c}
-              </button>
-            ))}
-          </div>
+          <FilterCount table={table} />
         </div>
+
+        {/* Phones don't render the table header, so the same filters appear as chips. */}
+        <FilterBar columns={columns} table={table} className="mb-4 md:hidden" />
 
         {isLoading ? (
           <SkeletonTable rows={6} cols={5} />
         ) : filtered.length === 0 ? (
-          <EmptyState icon={PackageSearch} title="No products found" description="Try a different search term or category." />
+          <EmptyState icon={PackageSearch} title="No products found" description="Try a different search term or filter." />
         ) : (
           <>
             {/* Card list — phones */}
@@ -103,12 +101,12 @@ export default function PriceList() {
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-base-600 text-left text-xs uppercase tracking-wide text-base-400">
-                    <th className="py-3 pr-4 font-medium">SKU</th>
-                    <th className="py-3 pr-4 font-medium">Product</th>
-                    <th className="py-3 pr-4 font-medium">Category</th>
-                    <th className="py-3 pr-4 font-medium">Unit</th>
-                    <th className="py-3 pl-4 text-right font-medium">Price</th>
+                  <tr className="border-b border-base-600 text-left">
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[0]!} table={table} /></th>
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[1]!} table={table} /></th>
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[2]!} table={table} /></th>
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[3]!} table={table} /></th>
+                    <th className="py-3 pl-4 font-medium"><ColumnFilter column={columns[4]!} table={table} align="right" /></th>
                   </tr>
                 </thead>
                 <tbody>

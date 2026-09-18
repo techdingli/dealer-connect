@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Receipt, Download, Loader2, Eye, Printer } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -7,6 +7,8 @@ import { Badge, toneForStatus } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
+import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
+import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { Logo } from '@/components/Logo'
 import { DealerLogo } from '@/components/DealerLogo'
 import { useAuth } from '@/context/AuthContext'
@@ -26,7 +28,21 @@ export default function InvoiceHistory() {
   const { data: invoiceDetail } = useInvoiceDetail(detailsInvoice?.id ?? null)
   const activeInvoice = invoiceDetail ?? detailsInvoice
 
-  const total = invoices?.reduce((sum, i) => sum + Number(i.amount), 0) ?? 0
+  const columns = useMemo<ColumnDef<Invoice>[]>(
+    () => [
+      { id: 'invoice_number', label: 'Invoice #', type: 'text', accessor: (i) => i.invoice_number },
+      { id: 'invoice_date', label: 'Date', type: 'date', accessor: (i) => i.invoice_date },
+      { id: 'amount', label: 'Amount', type: 'number', accessor: (i) => i.amount },
+      { id: 'status', label: 'Status', type: 'select', accessor: (i) => i.status },
+    ],
+    [],
+  )
+
+  const table = useTableFilters(invoices, columns)
+  const filtered = table.filteredRows
+  // Totals follow the filter — "total value" of a filtered list means the value
+  // of what you're looking at, not of rows that are hidden.
+  const total = filtered.reduce((sum, i) => sum + Number(i.amount), 0)
 
   async function handleDownload(id: string, pdfPath: string | null) {
     if (!pdfPath) {
@@ -59,20 +75,31 @@ export default function InvoiceHistory() {
       <Card className="p-4">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-base-300">
-            {invoices?.length ?? 0} invoices · Total value{' '}
-            <span className="font-semibold text-base-50">{formatCurrencyINR(total)}</span>
+            {table.activeFilterCount ? `${filtered.length} of ${table.totalCount}` : filtered.length} invoices ·
+            Total value <span className="font-semibold text-base-50">{formatCurrencyINR(total)}</span>
           </p>
+          <FilterCount table={table} />
         </div>
+
+        <FilterBar columns={columns} table={table} className="mb-4 md:hidden" />
 
         {isLoading ? (
           <SkeletonTable rows={6} cols={5} />
-        ) : !invoices || invoices.length === 0 ? (
-          <EmptyState icon={Receipt} title={`No invoices for ${CURRENT_FY}`} description="Invoices raised against your account will appear here." />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={Receipt}
+            title={table.activeFilterCount ? 'No invoices match those filters' : `No invoices for ${CURRENT_FY}`}
+            description={
+              table.activeFilterCount
+                ? 'Try clearing a column filter.'
+                : 'Invoices raised against your account will appear here.'
+            }
+          />
         ) : (
           <>
             {/* Card list — phones */}
             <div className="space-y-3 md:hidden">
-              {invoices.map((inv) => (
+              {filtered.map((inv) => (
                 <div key={inv.id} className="rounded-xl border border-base-700 p-3.5">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -113,16 +140,16 @@ export default function InvoiceHistory() {
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-base-600 text-left text-xs uppercase tracking-wide text-base-400">
-                    <th className="py-3 pr-4 font-medium">Invoice #</th>
-                    <th className="py-3 pr-4 font-medium">Date</th>
-                    <th className="py-3 pr-4 text-right font-medium">Amount</th>
-                    <th className="py-3 pr-4 font-medium">Status</th>
-                    <th className="py-3 pl-4 text-right font-medium">Actions</th>
+                  <tr className="border-b border-base-600 text-left">
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[0]!} table={table} /></th>
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[1]!} table={table} /></th>
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[2]!} table={table} align="right" /></th>
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[3]!} table={table} /></th>
+                    <th className="py-3 pl-4 text-right text-xs font-medium uppercase tracking-wide text-base-400">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {invoices.map((inv) => (
+                  {filtered.map((inv) => (
                     <tr key={inv.id} className="border-b border-base-700/60 transition-colors hover:bg-base-700/30">
                       <td className="py-3 pr-4 font-mono text-xs text-base-200">{inv.invoice_number}</td>
                       <td className="py-3 pr-4 text-base-300">{formatDate(inv.invoice_date)}</td>

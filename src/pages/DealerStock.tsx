@@ -7,35 +7,39 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
+import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
+import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useDealerStock } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
 import { exportToCsv } from '@/lib/csv'
-
-const selectClasses =
-  'rounded-xl border border-base-500 bg-base-900/60 px-3.5 py-2.5 text-sm text-base-50 ' +
-  'outline-none transition-colors focus:border-orange-500 focus:ring-2 focus:ring-orange-500/25 ' +
-  'disabled:opacity-50'
+import type { DealerStock as DealerStockRow } from '@/types/database'
 
 export default function DealerStock() {
   const { data: stock, isLoading } = useDealerStock()
   const [search, setSearch] = useState('')
-  const [locationFilter, setLocationFilter] = useState('')
 
-  const locations = useMemo(() => {
-    const unique = new Set((stock ?? []).map((s) => s.location).filter((l): l is string => Boolean(l)))
-    return Array.from(unique).sort()
-  }, [stock])
-
-  const filtered = useMemo(() => {
+  const searched = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return stock ?? []
     return (stock ?? []).filter((s) => {
-      if (locationFilter && s.location !== locationFilter) return false
-      if (!search) return true
       const name = s.product?.name?.toLowerCase() ?? ''
       const sku = s.product?.sku?.toLowerCase() ?? ''
-      return name.includes(search.toLowerCase()) || sku.includes(search.toLowerCase())
+      return name.includes(query) || sku.includes(query)
     })
-  }, [stock, search, locationFilter])
+  }, [stock, search])
 
+  const columns = useMemo<ColumnDef<DealerStockRow>[]>(
+    () => [
+      { id: 'product', label: 'Product', type: 'text', accessor: (s) => s.product?.name ?? '' },
+      { id: 'location', label: 'Location', type: 'select', accessor: (s) => s.location },
+      { id: 'quantity', label: 'Quantity', type: 'number', accessor: (s) => s.quantity },
+      { id: 'updated_at', label: 'Last Updated', type: 'date', accessor: (s) => s.updated_at },
+    ],
+    [],
+  )
+
+  const table = useTableFilters(searched, columns)
+  const filtered = table.filteredRows
   const totalUnits = filtered.reduce((sum, s) => sum + s.quantity, 0)
 
   const handleExport = () => {
@@ -62,30 +66,17 @@ export default function DealerStock() {
 
       <Card className="p-4">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative max-w-sm flex-1">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-base-400" />
-              <Input
-                placeholder="Search by product name or SKU..."
-                className="pl-10"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <select
-              className={selectClasses}
-              value={locationFilter}
-              onChange={(e) => setLocationFilter(e.target.value)}
-            >
-              <option value="">All locations</option>
-              {locations.map((location) => (
-                <option key={location} value={location}>
-                  {location}
-                </option>
-              ))}
-            </select>
+          <div className="relative max-w-sm flex-1">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-base-400" />
+            <Input
+              placeholder="Search by product name or SKU..."
+              className="pl-10"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
           <div className="flex items-center gap-4">
+            <FilterCount table={table} />
             <p className="text-sm text-base-300">
               Total: <span className="font-semibold text-base-50">{totalUnits.toLocaleString('en-IN')}</span> units
             </p>
@@ -95,6 +86,8 @@ export default function DealerStock() {
             </Button>
           </div>
         </div>
+
+        <FilterBar columns={columns} table={table} className="mb-4 md:hidden" />
 
         {isLoading ? (
           <SkeletonTable rows={6} cols={4} />
@@ -131,11 +124,11 @@ export default function DealerStock() {
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-base-600 text-left text-xs uppercase tracking-wide text-base-400">
-                    <th className="py-3 pr-4 font-medium">Product</th>
-                    <th className="py-3 pr-4 font-medium">Location</th>
-                    <th className="py-3 pr-4 text-right font-medium">Quantity</th>
-                    <th className="py-3 pl-4 text-right font-medium">Last Updated</th>
+                  <tr className="border-b border-base-600 text-left">
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[0]!} table={table} /></th>
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[1]!} table={table} /></th>
+                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[2]!} table={table} align="right" /></th>
+                    <th className="py-3 pl-4 font-medium"><ColumnFilter column={columns[3]!} table={table} align="right" /></th>
                   </tr>
                 </thead>
                 <tbody>

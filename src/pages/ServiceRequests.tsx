@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -10,8 +11,11 @@ import { Button } from '@/components/ui/Button'
 import { Badge, toneForStatus } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
+import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useServiceRequests, useSubmitServiceRequest } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
+import type { ServiceRequest } from '@/types/database'
 
 const schema = z.object({
   machineModel: z.string().min(2, 'Enter the machine model'),
@@ -24,6 +28,25 @@ type FormValues = z.infer<typeof schema>
 export default function ServiceRequests() {
   const { data: requests, isLoading } = useServiceRequests()
   const submitRequest = useSubmitServiceRequest()
+
+  // No column headers on a card list, so the same filters surface as chips.
+  const columns = useMemo<ColumnDef<ServiceRequest>[]>(
+    () => [
+      { id: 'machine_model', label: 'Machine', type: 'select', accessor: (r) => r.machine_model },
+      { id: 'priority', label: 'Priority', type: 'select', accessor: (r) => r.priority },
+      {
+        id: 'status',
+        label: 'Status',
+        type: 'select',
+        accessor: (r) => r.status,
+        formatOption: (v) => v.replace('_', ' '),
+      },
+      { id: 'created_at', label: 'Raised', type: 'date', accessor: (r) => r.created_at },
+    ],
+    [],
+  )
+  const table = useTableFilters(requests, columns)
+  const visible = table.filteredRows
 
   const {
     register,
@@ -97,17 +120,32 @@ export default function ServiceRequests() {
         </Card>
 
         <div className="lg:col-span-3">
-          <h2 className="font-display mb-4 text-lg font-semibold text-base-50">Your tickets</h2>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-lg font-semibold text-base-50">Your tickets</h2>
+            <FilterCount table={table} />
+          </div>
+
+          {requests && requests.length > 0 && (
+            <FilterBar columns={columns} table={table} className="mb-4" />
+          )}
           {isLoading ? (
             <div className="space-y-3">
               <Skeleton className="h-24" />
               <Skeleton className="h-24" />
             </div>
-          ) : !requests || requests.length === 0 ? (
-            <EmptyState icon={Wrench} title="No service requests yet" description="Tickets you raise will appear here with live status updates." />
+          ) : visible.length === 0 ? (
+            <EmptyState
+              icon={Wrench}
+              title={table.activeFilterCount ? 'No tickets match those filters' : 'No service requests yet'}
+              description={
+                table.activeFilterCount
+                  ? 'Try clearing a filter.'
+                  : 'Tickets you raise will appear here with live status updates.'
+              }
+            />
           ) : (
             <div className="space-y-3">
-              {requests.map((r) => (
+              {visible.map((r) => (
                 <Card key={r.id} className="p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>

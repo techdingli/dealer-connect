@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -10,8 +11,11 @@ import { Button } from '@/components/ui/Button'
 import { Badge, toneForStatus } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
+import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useFeedbackList, useSubmitFeedback } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
+import type { Feedback as FeedbackRow } from '@/types/database'
 
 const schema = z.object({
   category: z.enum(['general', 'complaint', 'suggestion', 'compliment']),
@@ -23,6 +27,17 @@ type FormValues = z.infer<typeof schema>
 export default function Feedback() {
   const { data: feedback, isLoading } = useFeedbackList()
   const submitFeedback = useSubmitFeedback()
+
+  const columns = useMemo<ColumnDef<FeedbackRow>[]>(
+    () => [
+      { id: 'category', label: 'Category', type: 'select', accessor: (f) => f.category },
+      { id: 'status', label: 'Status', type: 'select', accessor: (f) => f.status },
+      { id: 'created_at', label: 'Submitted', type: 'date', accessor: (f) => f.created_at },
+    ],
+    [],
+  )
+  const table = useTableFilters(feedback, columns)
+  const visible = table.filteredRows
 
   const {
     register,
@@ -91,17 +106,32 @@ export default function Feedback() {
         </Card>
 
         <div className="lg:col-span-3">
-          <h2 className="font-display mb-4 text-lg font-semibold text-base-50">Your submissions</h2>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-lg font-semibold text-base-50">Your submissions</h2>
+            <FilterCount table={table} />
+          </div>
+
+          {feedback && feedback.length > 0 && (
+            <FilterBar columns={columns} table={table} className="mb-4" />
+          )}
           {isLoading ? (
             <div className="space-y-3">
               <Skeleton className="h-20" />
               <Skeleton className="h-20" />
             </div>
-          ) : !feedback || feedback.length === 0 ? (
-            <EmptyState icon={MessageSquareHeart} title="No feedback submitted yet" description="Your submissions will show up here once you send one." />
+          ) : visible.length === 0 ? (
+            <EmptyState
+              icon={MessageSquareHeart}
+              title={table.activeFilterCount ? 'No feedback matches those filters' : 'No feedback submitted yet'}
+              description={
+                table.activeFilterCount
+                  ? 'Try clearing a filter.'
+                  : 'Your submissions will show up here once you send one.'
+              }
+            />
           ) : (
             <div className="space-y-3">
-              {feedback.map((f) => (
+              {visible.map((f) => (
                 <Card key={f.id} className="p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>

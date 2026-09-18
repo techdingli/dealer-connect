@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { BookMarked, Download, FileText } from 'lucide-react'
@@ -6,8 +7,11 @@ import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
+import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useCatalogs, getCatalogDownloadUrl } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
+import type { Catalog } from '@/types/database'
 
 const downloadClasses =
   'mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 ' +
@@ -49,6 +53,17 @@ function CatalogDownload({ filePath }: { filePath: string }) {
 export default function Catalogs() {
   const { data: catalogs, isLoading } = useCatalogs()
 
+  const columns = useMemo<ColumnDef<Catalog>[]>(
+    () => [
+      { id: 'title', label: 'Title', type: 'text', accessor: (c) => c.title },
+      { id: 'category', label: 'Category', type: 'select', accessor: (c) => c.category },
+      { id: 'created_at', label: 'Added', type: 'date', accessor: (c) => c.created_at },
+    ],
+    [],
+  )
+  const table = useTableFilters(catalogs, columns)
+  const visible = table.filteredRows
+
   return (
     <div>
       <PageHeader
@@ -57,17 +72,32 @@ export default function Catalogs() {
         description="Product catalogs and spec sheets, ready to download and share with your customers."
       />
 
+      {catalogs && catalogs.length > 0 && (
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <FilterBar columns={columns} table={table} />
+          <FilterCount table={table} />
+        </div>
+      )}
+
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-44" />
           ))}
         </div>
-      ) : !catalogs || catalogs.length === 0 ? (
-        <EmptyState icon={BookMarked} title="No catalogs available yet" description="Check back soon — new product catalogs will appear here." />
+      ) : visible.length === 0 ? (
+        <EmptyState
+          icon={BookMarked}
+          title={table.activeFilterCount ? 'No catalogs match those filters' : 'No catalogs available yet'}
+          description={
+            table.activeFilterCount
+              ? 'Try clearing a filter.'
+              : 'Check back soon — new product catalogs will appear here.'
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {catalogs.map((c, i) => (
+          {visible.map((c, i) => (
             <motion.div
               key={c.id}
               initial={{ opacity: 0, y: 14 }}
