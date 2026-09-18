@@ -1,28 +1,56 @@
 import { useMemo, useState } from 'react'
-import { Search, Boxes } from 'lucide-react'
+import { Search, Boxes, Download } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
+import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { useDealerStock } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
+import { exportToCsv } from '@/lib/csv'
+
+const selectClasses =
+  'rounded-xl border border-base-500 bg-base-900/60 px-3.5 py-2.5 text-sm text-base-50 ' +
+  'outline-none transition-colors focus:border-orange-500 focus:ring-2 focus:ring-orange-500/25 ' +
+  'disabled:opacity-50'
 
 export default function DealerStock() {
   const { data: stock, isLoading } = useDealerStock()
   const [search, setSearch] = useState('')
+  const [locationFilter, setLocationFilter] = useState('')
+
+  const locations = useMemo(() => {
+    const unique = new Set((stock ?? []).map((s) => s.location).filter((l): l is string => Boolean(l)))
+    return Array.from(unique).sort()
+  }, [stock])
 
   const filtered = useMemo(() => {
     return (stock ?? []).filter((s) => {
+      if (locationFilter && s.location !== locationFilter) return false
       if (!search) return true
       const name = s.product?.name?.toLowerCase() ?? ''
       const sku = s.product?.sku?.toLowerCase() ?? ''
       return name.includes(search.toLowerCase()) || sku.includes(search.toLowerCase())
     })
-  }, [stock, search])
+  }, [stock, search, locationFilter])
 
   const totalUnits = filtered.reduce((sum, s) => sum + s.quantity, 0)
+
+  const handleExport = () => {
+    exportToCsv(
+      'my-stock.csv',
+      filtered.map((s) => ({
+        Product: s.product?.name ?? 'Unknown product',
+        SKU: s.product?.sku ?? '',
+        Category: s.product?.category ?? '',
+        Quantity: s.quantity,
+        Location: s.location ?? '',
+        Updated: formatDate(s.updated_at),
+      })),
+    )
+  }
 
   return (
     <div>
@@ -34,18 +62,38 @@ export default function DealerStock() {
 
       <Card className="p-4">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative max-w-sm flex-1">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-base-400" />
-            <Input
-              placeholder="Search by product name or SKU..."
-              className="pl-10"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative max-w-sm flex-1">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-base-400" />
+              <Input
+                placeholder="Search by product name or SKU..."
+                className="pl-10"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <select
+              className={selectClasses}
+              value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+            >
+              <option value="">All locations</option>
+              {locations.map((location) => (
+                <option key={location} value={location}>
+                  {location}
+                </option>
+              ))}
+            </select>
           </div>
-          <p className="text-sm text-base-300">
-            Total: <span className="font-semibold text-base-50">{totalUnits.toLocaleString('en-IN')}</span> units
-          </p>
+          <div className="flex items-center gap-4">
+            <p className="text-sm text-base-300">
+              Total: <span className="font-semibold text-base-50">{totalUnits.toLocaleString('en-IN')}</span> units
+            </p>
+            <Button variant="secondary" size="sm" onClick={handleExport} disabled={filtered.length === 0}>
+              <Download className="size-4" />
+              Export CSV
+            </Button>
+          </div>
         </div>
 
         {isLoading ? (

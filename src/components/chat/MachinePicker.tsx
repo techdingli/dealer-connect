@@ -71,11 +71,10 @@ export function MachinePicker({ onSelect }: { onSelect: (modelName: string) => v
                 className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-base-100 transition-colors hover:bg-base-700/60"
               >
                 <span className="font-medium">{m.model_name}</span>
-                {m.manual_text ? (
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-green-400">Manual ready</span>
-                ) : (
-                  <ChevronRight className="size-3.5 text-base-500" />
-                )}
+                {/* useMachines only ever returns machines with a manual_text on
+                    file (see queries.ts), so every model listed here can
+                    actually be answered about. */}
+                <span className="text-[10px] font-medium uppercase tracking-wide text-green-400">Manual ready</span>
               </button>
             ))
           )}

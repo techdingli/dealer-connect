@@ -37,7 +37,7 @@ export default function Dashboard() {
     <div>
       <PageHeader
         eyebrow={CURRENT_FY}
-        title={`Welcome back, ${displayName} 👋`}
+        title={`Welcome back, ${displayName}`}
         description={`Here's a snapshot of your ${profile?.company_name ?? 'dealership'}'s account with Dingli India.`}
       />
 

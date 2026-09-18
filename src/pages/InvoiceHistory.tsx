@@ -1,20 +1,29 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Receipt, Download, Loader2, Eye } from 'lucide-react'
+import { Receipt, Download, Loader2, Eye, Printer } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card } from '@/components/ui/Card'
 import { Badge, toneForStatus } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
-import { useInvoices, getInvoiceSignedUrl } from '@/hooks/queries'
+import { Logo } from '@/components/Logo'
+import { useAuth } from '@/context/AuthContext'
+import { useInvoices, useInvoiceDetail, getInvoiceSignedUrl } from '@/hooks/queries'
 import { formatCurrencyINR, formatDate, CURRENT_FY } from '@/lib/utils'
 import type { Invoice } from '@/types/database'
 
 export default function InvoiceHistory() {
+  const { profile } = useAuth()
   const { data: invoices, isLoading } = useInvoices()
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [detailsInvoice, setDetailsInvoice] = useState<Invoice | null>(null)
+  // The invoice list already carries invoice_items, but we re-fetch the single
+  // record here so the detail view always shows the authoritative row (and so
+  // this follows the same per-record query pattern as the rest of the app).
+  // Falls back to the row from the list while the dedicated fetch is in flight.
+  const { data: invoiceDetail } = useInvoiceDetail(detailsInvoice?.id ?? null)
+  const activeInvoice = invoiceDetail ?? detailsInvoice
 
   const total = invoices?.reduce((sum, i) => sum + Number(i.amount), 0) ?? 0
 
@@ -153,64 +162,146 @@ export default function InvoiceHistory() {
       <Modal
         open={!!detailsInvoice}
         onClose={() => setDetailsInvoice(null)}
-        title={detailsInvoice?.invoice_number ?? ''}
-        description={detailsInvoice ? `${formatDate(detailsInvoice.invoice_date)} · ${detailsInvoice.fy}` : undefined}
+        title={activeInvoice?.invoice_number ?? ''}
+        description={activeInvoice ? `${formatDate(activeInvoice.invoice_date)} · ${activeInvoice.fy}` : undefined}
+        className="sm:max-w-2xl"
       >
-        {detailsInvoice && (
+        {activeInvoice && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Badge tone={toneForStatus(detailsInvoice.status)}>{detailsInvoice.status}</Badge>
-              <button
-                onClick={() => handleDownload(detailsInvoice.id, detailsInvoice.pdf_path)}
-                disabled={downloadingId === detailsInvoice.id}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-base-600 px-2.5 py-1.5 text-xs font-medium text-base-200 hover:border-orange-500/40 hover:text-orange-300 disabled:opacity-50"
-              >
-                {downloadingId === detailsInvoice.id ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Download className="size-3.5" />
-                )}
-                Download PDF
-              </button>
+            {/* Print rule: hide everything on the page except the invoice document itself. */}
+            <style>{`
+              @media print {
+                body * { visibility: hidden; }
+                #invoice-print-area, #invoice-print-area * { visibility: visible; }
+                #invoice-print-area { position: absolute; inset: 0; width: 100%; padding: 0; }
+              }
+            `}</style>
+
+            <div className="flex items-center justify-between print:hidden">
+              <Badge tone={toneForStatus(activeInvoice.status)}>{activeInvoice.status}</Badge>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-base-600 px-2.5 py-1.5 text-xs font-medium text-base-200 hover:border-orange-500/40 hover:text-orange-300"
+                >
+                  <Printer className="size-3.5" />
+                  Print
+                </button>
+                <button
+                  onClick={() => handleDownload(activeInvoice.id, activeInvoice.pdf_path)}
+                  disabled={downloadingId === activeInvoice.id}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-base-600 px-2.5 py-1.5 text-xs font-medium text-base-200 hover:border-orange-500/40 hover:text-orange-300 disabled:opacity-50"
+                >
+                  {downloadingId === activeInvoice.id ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Download className="size-3.5" />
+                  )}
+                  Download PDF
+                </button>
+              </div>
             </div>
 
-            {!detailsInvoice.invoice_items || detailsInvoice.invoice_items.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-base-600 p-4 text-center text-sm text-base-400">
-                No itemized breakdown is available for this invoice.
-              </p>
-            ) : (
-              <div className="overflow-hidden rounded-xl border border-base-600">
-                <table className="w-full border-collapse text-sm">
-                  <thead>
-                    <tr className="border-b border-base-600 bg-base-900/60 text-left text-xs uppercase tracking-wide text-base-400">
-                      <th className="py-2.5 pl-3.5 pr-2 font-medium">Item</th>
-                      <th className="py-2.5 pr-2 text-right font-medium">Qty</th>
-                      <th className="py-2.5 pr-3.5 text-right font-medium">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detailsInvoice.invoice_items.map((item) => (
-                      <tr key={item.id} className="border-b border-base-700/60 last:border-0">
-                        <td className="py-2.5 pl-3.5 pr-2">
-                          <p className="text-base-50">{item.description}</p>
-                          <p className="text-xs text-base-400">{formatCurrencyINR(item.unit_price)} / unit</p>
-                        </td>
-                        <td className="py-2.5 pr-2 text-right text-base-300">{item.quantity}</td>
-                        <td className="py-2.5 pr-3.5 text-right font-medium text-base-50">
-                          {formatCurrencyINR(item.line_total)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* The invoice document itself — kept visually self-contained (its own
+                letterhead, bill-to, line items and total) so it reads like a real
+                invoice a business would send, on screen and on the printed page. */}
+            <div
+              id="invoice-print-area"
+              className="rounded-2xl border border-base-600 bg-base-900/60 p-5 print:rounded-none print:border-0 print:bg-white print:p-8 sm:p-6"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-base-600 pb-4 print:border-black/20">
+                <div>
+                  <Logo compact forceScheme="light" />
+                  <p className="mt-2 text-xs text-base-400 print:text-black/60">Dingli India · Dealer Connect Portal</p>
+                </div>
+                <div className="text-right">
+                  <h3 className="font-display text-base font-semibold uppercase tracking-wide text-base-50 print:text-black">
+                    Tax Invoice
+                  </h3>
+                  <p className="mt-1 font-mono text-sm text-base-200 print:text-black">{activeInvoice.invoice_number}</p>
+                  <p className="text-xs text-base-400 print:text-black/60">{activeInvoice.fy}</p>
+                </div>
               </div>
-            )}
 
-            <div className="flex items-center justify-between border-t border-base-600 pt-3">
-              <span className="font-display font-semibold text-base-50">Total</span>
-              <span className="font-display text-lg font-semibold text-orange-400">
-                {formatCurrencyINR(detailsInvoice.amount)}
-              </span>
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-base-400 print:text-black/60">
+                    Billed to
+                  </p>
+                  <p className="mt-1 font-medium text-base-50 print:text-black">
+                    {profile?.company_name || profile?.dealer_name || 'Your dealership'}
+                  </p>
+                  {profile?.company_name && profile?.dealer_name && (
+                    <p className="text-sm text-base-300 print:text-black/70">{profile.dealer_name}</p>
+                  )}
+                  {profile?.gstin && <p className="text-sm text-base-300 print:text-black/70">GSTIN: {profile.gstin}</p>}
+                  {profile?.phone && <p className="text-sm text-base-300 print:text-black/70">{profile.phone}</p>}
+                </div>
+                <div className="sm:text-right">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-base-400 print:text-black/60">
+                    Invoice date
+                  </p>
+                  <p className="mt-1 text-base-50 print:text-black">{formatDate(activeInvoice.invoice_date)}</p>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-base-400 print:text-black/60">
+                    Status
+                  </p>
+                  <Badge tone={toneForStatus(activeInvoice.status)} className="mt-1 print:border-black/30 print:bg-transparent print:text-black">
+                    {activeInvoice.status}
+                  </Badge>
+                </div>
+              </div>
+
+              {!activeInvoice.invoice_items || activeInvoice.invoice_items.length === 0 ? (
+                <p className="mt-6 rounded-lg border border-dashed border-base-600 p-4 text-center text-sm text-base-400 print:border-black/20 print:text-black/60">
+                  No itemized breakdown is available for this invoice.
+                </p>
+              ) : (
+                <div className="mt-6 overflow-hidden rounded-xl border border-base-600 print:rounded-none print:border-black/20">
+                  <table className="w-full border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-base-600 bg-base-900/60 text-left text-xs uppercase tracking-wide text-base-400 print:border-black/20 print:bg-transparent print:text-black/60">
+                        <th className="py-2.5 pl-3.5 pr-2 font-medium">Description</th>
+                        <th className="py-2.5 pr-2 text-right font-medium">Qty</th>
+                        <th className="py-2.5 pr-2 text-right font-medium">Unit Price</th>
+                        <th className="py-2.5 pr-3.5 text-right font-medium">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeInvoice.invoice_items.map((item) => (
+                        <tr key={item.id} className="border-b border-base-700/60 last:border-0 print:border-black/10">
+                          <td className="py-2.5 pl-3.5 pr-2 text-base-50 print:text-black">{item.description}</td>
+                          <td className="py-2.5 pr-2 text-right text-base-300 print:text-black/80">{item.quantity}</td>
+                          <td className="py-2.5 pr-2 text-right text-base-300 print:text-black/80">
+                            {formatCurrencyINR(item.unit_price)}
+                          </td>
+                          <td className="py-2.5 pr-3.5 text-right font-medium text-base-50 print:text-black">
+                            {formatCurrencyINR(item.line_total)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="mt-4 flex justify-end">
+                <div className="w-full max-w-xs space-y-1.5">
+                  {activeInvoice.invoice_items && activeInvoice.invoice_items.length > 0 && (
+                    <div className="flex items-center justify-between text-sm text-base-300 print:text-black/70">
+                      <span>Subtotal</span>
+                      <span>
+                        {formatCurrencyINR(activeInvoice.invoice_items.reduce((sum, item) => sum + Number(item.line_total), 0))}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between border-t border-base-600 pt-1.5 print:border-black/20">
+                    <span className="font-display font-semibold text-base-50 print:text-black">Total</span>
+                    <span className="font-display text-lg font-semibold text-orange-400 print:text-black">
+                      {formatCurrencyINR(activeInvoice.amount)}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}

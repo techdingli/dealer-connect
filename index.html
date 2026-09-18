@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#18181b" />
+    <meta name="theme-color" content="#f7f7f8" />
     <meta name="description" content="Dingli India Dealer Connect Portal — price lists, stock, invoices, ledger, service requests and catalogs for authorized Dingli dealers." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -16,13 +16,14 @@
     <script>
       // Set the theme class before first paint so switching themes never
       // flashes the wrong one. Kept in sync with ThemeContext's storage key.
+      // Default is light regardless of OS preference — only an explicit
+      // stored choice switches to dark.
       (function () {
         try {
           var stored = localStorage.getItem('dingli-theme');
-          var isDark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-          document.documentElement.classList.toggle('dark', isDark);
+          document.documentElement.classList.toggle('dark', stored === 'dark');
         } catch (e) {
-          document.documentElement.classList.add('dark');
+          // Private browsing / storage disabled — fall back to the default light theme.
         }
       })();
     </script>

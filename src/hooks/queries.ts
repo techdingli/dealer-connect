@@ -44,6 +44,12 @@ export function useMachines() {
       const { data, error } = await supabase
         .from('machines')
         .select('model_name, category, manual_text')
+        // The support chatbot can only ever answer questions about a machine
+        // that has a manual on file (see runSupportChat's manual_text check
+        // in api/chat.ts) — filtering here means the picker never offers a
+        // model that's guaranteed to dead-end, and trims the payload too.
+        .not('manual_text', 'is', null)
+        .neq('manual_text', '')
         .order('category', { ascending: true })
         .order('model_name', { ascending: true })
       if (error) throw error
@@ -100,6 +106,24 @@ export function useInvoices() {
         .select('*, invoice_items(*)')
         .eq('dealer_id', user!.id)
         .order('invoice_date', { ascending: false })
+      if (error) throw error
+      return data
+    },
+  })
+}
+
+export function useInvoiceDetail(invoiceId: string | null) {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['invoice', invoiceId],
+    enabled: !!user && !!invoiceId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('*, invoice_items(*)')
+        .eq('id', invoiceId!)
+        .eq('dealer_id', user!.id)
+        .single()
       if (error) throw error
       return data
     },

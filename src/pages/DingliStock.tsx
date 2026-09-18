@@ -1,26 +1,54 @@
 import { useMemo, useState } from 'react'
-import { Search, Warehouse } from 'lucide-react'
+import { Search, Warehouse, Download } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
+import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { useDingliStock } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
+import { exportToCsv } from '@/lib/csv'
+
+const selectClasses =
+  'rounded-xl border border-base-500 bg-base-900/60 px-3.5 py-2.5 text-sm text-base-50 ' +
+  'outline-none transition-colors focus:border-orange-500 focus:ring-2 focus:ring-orange-500/25 ' +
+  'disabled:opacity-50'
 
 export default function DingliStock() {
   const { data: stock, isLoading } = useDingliStock()
   const [search, setSearch] = useState('')
+  const [warehouseFilter, setWarehouseFilter] = useState('')
+
+  const warehouses = useMemo(() => {
+    const unique = new Set((stock ?? []).map((s) => s.warehouse).filter((w): w is string => Boolean(w)))
+    return Array.from(unique).sort()
+  }, [stock])
 
   const filtered = useMemo(() => {
     return (stock ?? []).filter((s) => {
+      if (warehouseFilter && s.warehouse !== warehouseFilter) return false
       if (!search) return true
       const name = s.product?.name?.toLowerCase() ?? ''
       const sku = s.product?.sku?.toLowerCase() ?? ''
       return name.includes(search.toLowerCase()) || sku.includes(search.toLowerCase())
     })
-  }, [stock, search])
+  }, [stock, search, warehouseFilter])
+
+  const handleExport = () => {
+    exportToCsv(
+      'dingli-stock.csv',
+      filtered.map((s) => ({
+        Product: s.product?.name ?? 'Unknown product',
+        SKU: s.product?.sku ?? '',
+        Category: s.product?.category ?? '',
+        Quantity: s.quantity,
+        Warehouse: s.warehouse ?? '',
+        Updated: formatDate(s.updated_at),
+      })),
+    )
+  }
 
   return (
     <div>
@@ -31,14 +59,34 @@ export default function DingliStock() {
       />
 
       <Card className="p-4">
-        <div className="relative mb-4">
-          <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-base-400" />
-          <Input
-            placeholder="Search by product name or SKU..."
-            className="max-w-sm pl-10"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative max-w-sm flex-1">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-base-400" />
+              <Input
+                placeholder="Search by product name or SKU..."
+                className="pl-10"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <select
+              className={selectClasses}
+              value={warehouseFilter}
+              onChange={(e) => setWarehouseFilter(e.target.value)}
+            >
+              <option value="">All warehouses</option>
+              {warehouses.map((warehouse) => (
+                <option key={warehouse} value={warehouse}>
+                  {warehouse}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button variant="secondary" size="sm" onClick={handleExport} disabled={filtered.length === 0}>
+            <Download className="size-4" />
+            Export CSV
+          </Button>
         </div>
 
         {isLoading ? (
