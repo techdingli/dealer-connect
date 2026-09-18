@@ -84,7 +84,7 @@ const DEALER_TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_ledger',
     description:
-      "Get the signed-in dealer's ledger entries (date, description, debit, credit, running balance) for the current financial year.",
+      "Get the signed-in dealer's ledger entries (date, voucher, description, debit, credit) as recorded in Focus. Payments and adjustments only — invoices are not consistently included, and there is no running balance.",
     input_schema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -111,8 +111,8 @@ async function runDealerTool(name: string, supabase: SupabaseClient): Promise<un
     }
     case 'get_ledger': {
       const { data, error } = await supabase
-        .from('ledger_entries')
-        .select('fy, entry_date, description, debit, credit, running_balance')
+        .from('dealer_ledger')
+        .select('entry_date, voucher_no, voucher_type, description, debit, credit')
         .order('entry_date', { ascending: true })
       if (error) throw error
       return data
@@ -143,6 +143,7 @@ const DEALER_SYSTEM_PROMPT = `You are the Dingli Dealer Connect assistant, helpi
 Rules:
 - Always call the relevant tool(s) to fetch real data before answering. Never guess or estimate numbers.
 - You can only ever see the signed-in dealer's own data — if asked about another dealer, explain that politely.
+- The ledger has no running balance and may not include every invoice — present it as a record of payments and adjustments, not a full statement of account.
 - Format money as Indian Rupees, e.g. ₹8,75,000.
 - Be concise and direct. Use a short list or table-like formatting for multiple records.
 - If a tool returns no rows, say so plainly rather than inventing an answer.`
@@ -152,16 +153,13 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], supabase: S
 
   if (/(ledger|balance|owe|outstanding)/.test(question)) {
     const entries = (await runDealerTool('get_ledger', supabase)) as Array<{
-      fy: string
       debit: number
       credit: number
-      running_balance: number
     }>
     if (!entries.length) return `You have no ledger entries on file yet.${MOCK_NOTICE}`
     const totalDebit = entries.reduce((s, e) => s + Number(e.debit), 0)
     const totalCredit = entries.reduce((s, e) => s + Number(e.credit), 0)
-    const closing = entries[entries.length - 1].running_balance
-    return `Your ${entries[0].fy} ledger: total debit ${formatINR(totalDebit)}, total credit ${formatINR(totalCredit)}, closing balance ${formatINR(closing)}.${MOCK_NOTICE}`
+    return `Your ledger (payments and adjustments only, no running balance): total debit ${formatINR(totalDebit)}, total credit ${formatINR(totalCredit)}.${MOCK_NOTICE}`
   }
 
   if (/(invoice|bill)/.test(question)) {
