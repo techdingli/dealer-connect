@@ -8,6 +8,7 @@ import type {
   Profile,
   ServiceRequest,
   ServiceStatus,
+  StockMovement,
 } from '@/types/database'
 import type { Dealer } from '@/config/dealers'
 import { getDealer } from '@/config/dealers'
@@ -81,23 +82,108 @@ function buildProfile(dealer: Dealer, rng: Rng): Profile {
   }
 }
 
+/**
+ * Cities a dealership might hold stock in beyond its home base. Every dealer
+ * gets their home city plus a few of these, so the Location column has enough
+ * variety to be worth filtering on.
+ */
+const CITY_POOL = [
+  'Mumbai', 'Pune', 'Nashik', 'Nagpur', 'Ahmedabad', 'Surat', 'Vadodara',
+  'Delhi', 'Gurugram', 'Noida', 'Jaipur', 'Lucknow', 'Chandigarh', 'Ludhiana',
+  'Chennai', 'Coimbatore', 'Madurai', 'Bengaluru', 'Hyderabad', 'Vijayawada',
+  'Kochi', 'Thiruvananthapuram', 'Kolkata', 'Bhubaneswar', 'Jamshedpur',
+  'Ranchi', 'Indore', 'Raipur', 'Visakhapatnam', 'Goa',
+]
+
+const FACILITY_KINDS = ['Yard', 'Warehouse', 'Service Centre', 'Depot']
+
+const CUSTOMERS = [
+  'Sterling Infra Projects', 'Vardhman Construction Co.', 'Meridian Facility Services',
+  'Trident Erectors Pvt Ltd', 'Anand Industrial Services', 'Blue Harbour Logistics',
+  'Sunrise Warehousing LLP', 'Keystone Builders', 'Orbit Maintenance Group',
+  'Greenfield Estates Pvt Ltd',
+]
+
+/** Every dealer's stock sites: home city first, then a few others. */
+function dealerCities(dealer: Dealer, rng: Rng): string[] {
+  const others = rng.sample(
+    CITY_POOL.filter((c) => c !== dealer.city),
+    rng.int(2, 4),
+  )
+  return [dealer.city, ...others]
+}
+
+/** What the dealer paid for a line, and what they've sold out of it since. */
+function buildMovement(
+  rng: Rng,
+  product: (typeof DEMO_PRODUCTS)[number],
+  onHand: number,
+  stockId: string,
+): StockMovement {
+  const soldQty = product.category === 'Spare Parts' ? rng.int(0, 10) : rng.int(0, 3)
+  const purchasedQty = onHand + soldQty
+
+  // Dealers buy under list and sell above what they paid — that spread is the
+  // whole point of the purchase/sale view.
+  const unitCost = Math.round((product.price * (1 - rng.int(8, 20) / 100)) / 100) * 100
+  const purchaseDaysAgo = rng.int(60, 540)
+
+  let remainingToSell = soldQty
+  const sales = []
+  let saleIndex = 0
+  while (remainingToSell > 0) {
+    const quantity = Math.min(remainingToSell, rng.int(1, 3))
+    remainingToSell -= quantity
+    const unitPrice = Math.round((unitCost * (1 + rng.int(6, 24) / 100)) / 100) * 100
+    sales.push({
+      id: `${stockId}-sale-${++saleIndex}`,
+      date: isoTimestampDaysAgo(rng.int(1, Math.max(2, purchaseDaysAgo - 15))).slice(0, 10),
+      customer: rng.pick(CUSTOMERS),
+      quantity,
+      unit_price: unitPrice,
+      total: unitPrice * quantity,
+    })
+  }
+  sales.sort((a, b) => b.date.localeCompare(a.date))
+
+  return {
+    purchase: {
+      invoice_number: `DIN/25-26/${rng.int(1000, 9999)}`,
+      date: isoTimestampDaysAgo(purchaseDaysAgo).slice(0, 10),
+      quantity: purchasedQty,
+      unit_cost: unitCost,
+      total_cost: unitCost * purchasedQty,
+      supplier: 'Dingli India AWP Pvt. Ltd.',
+    },
+    sales,
+  }
+}
+
 function buildDealerStock(dealer: Dealer, rng: Rng): DealerStock[] {
   const machines = DEMO_PRODUCTS.filter((p) => p.category !== 'Spare Parts')
   const spares = DEMO_PRODUCTS.filter((p) => p.category === 'Spare Parts')
-  const locations = [`${dealer.city} Yard`, `${dealer.city} Warehouse`, `${dealer.city} Service Centre`]
+  const cities = dealerCities(dealer, rng)
 
-  const held = [...rng.sample(machines, rng.int(4, 9)), ...rng.sample(spares, rng.int(1, 4))]
+  // Enough lines that filtering by city or category actually narrows something.
+  const held = [...rng.sample(machines, rng.int(8, 14)), ...rng.sample(spares, rng.int(3, 6))]
 
   return held
-    .map((product, i) => ({
-      id: `demo-dealer-stock-${dealer.id}-${i}`,
-      dealer_id: dealer.id,
-      product_id: product.id,
-      quantity: product.category === 'Spare Parts' ? rng.int(2, 24) : rng.int(1, 5),
-      location: rng.pick(locations),
-      updated_at: isoTimestampDaysAgo(rng.int(0, 60)),
-      product,
-    }))
+    .map((product, i) => {
+      const id = `demo-dealer-stock-${dealer.id}-${i}`
+      const quantity = product.category === 'Spare Parts' ? rng.int(2, 24) : rng.int(1, 5)
+      const city = rng.pick(cities)
+      return {
+        id,
+        dealer_id: dealer.id,
+        product_id: product.id,
+        quantity,
+        location: city,
+        warehouse: `${city} ${rng.pick(FACILITY_KINDS)}`,
+        movement: buildMovement(rng, product, quantity, id),
+        updated_at: isoTimestampDaysAgo(rng.int(0, 60)),
+        product,
+      }
+    })
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 }
 

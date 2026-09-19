@@ -102,7 +102,7 @@ export function MachinePicker({ onSelect }: { onSelect: (modelName: string) => v
           >
             <span>{name}</span>
             <span className="flex items-center gap-1.5 text-xs text-base-400">
-              {count} models <ChevronRight className="size-3.5" />
+              {count} {count === 1 ? 'model' : 'models'} <ChevronRight className="size-3.5" />
             </span>
           </motion.button>
         ))}

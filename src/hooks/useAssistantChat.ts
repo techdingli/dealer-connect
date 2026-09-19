@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { DEMO_MODE } from '@/config/demo'
-import { answerDealerQuestion, answerSupportQuestion } from '@/lib/demo/assistant'
+import { answerDealerQuestion, answerProductQuestion, answerSupportQuestion } from '@/lib/demo/assistant'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -9,7 +9,7 @@ export interface ChatMessage {
 }
 
 interface UseAssistantChatOptions {
-  category: 'dealer' | 'support'
+  category: 'dealer' | 'support' | 'products'
   machineModel?: string
 }
 
@@ -34,7 +34,9 @@ export function useAssistantChat({ category, machineModel }: UseAssistantChatOpt
       const reply =
         category === 'support' && machineModel
           ? answerSupportQuestion(machineModel, trimmed)
-          : answerDealerQuestion(user?.id ?? '', trimmed)
+          : category === 'products'
+            ? answerProductQuestion(trimmed)
+            : answerDealerQuestion(user?.id ?? '', trimmed)
 
       // A beat of latency so the typing indicator reads as a real reply.
       window.setTimeout(() => {

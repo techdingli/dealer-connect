@@ -38,10 +38,10 @@ const MAX_TOKENS = 4096
 const MAX_TOOL_ITERATIONS = 6
 
 const MOCK_NOTICE =
-  '\n\n_(Demo mode — no live AI key connected yet. This answer used real data with simple keyword matching; connecting `ANTHROPIC_API_KEY` switches this to full natural-language understanding, no other changes needed.)_'
+  '\n\n_(No AI key connected yet — this answer used real data with simple keyword matching; setting `ANTHROPIC_API_KEY` switches this to full natural-language understanding, no other changes needed.)_'
 
 type ChatBody = {
-  category: 'dealer' | 'support'
+  category: 'dealer' | 'support' | 'products'
   messages: Anthropic.MessageParam[]
   accessToken?: string
   machineModel?: string
@@ -602,6 +602,138 @@ ${manualContext}
 }
 
 // ---------------------------------------------------------------------------
+// Products — pre-sales questions about the range
+// ---------------------------------------------------------------------------
+//
+// Context-stuffed rather than tool-driven: the whole catalogue is a few dozen
+// rows, so sending it costs less than a tool round-trip would, and it lets
+// Claude compare models against each other in one pass. Nothing here is
+// dealer-specific, but it still runs through the caller's token so an
+// unauthenticated request can't use it.
+
+type CatalogueRow = {
+  sku: string
+  name: string
+  category: string | null
+  unit: string
+  price: number
+  description: string | null
+}
+
+function catalogueToText(rows: CatalogueRow[]): string {
+  return rows
+    .map(
+      (p) =>
+        `- ${p.name} | SKU ${p.sku} | ${p.category ?? 'Uncategorised'} | ${formatINR(p.price)} per ${p.unit}` +
+        (p.description ? ` | ${p.description}` : ''),
+    )
+    .join('\n')
+}
+
+/** Keyword fallback used when no ANTHROPIC_API_KEY is configured. */
+function runProductChatMock(question: string, rows: CatalogueRow[]): string {
+  const q = question.toLowerCase()
+  const squashed = q.replace(/[\s-]/g, '')
+
+  const named = rows.find((p) => squashed.includes(p.sku.toLowerCase().replace(/[\s-]/g, '')))
+  if (named) {
+    return (
+      `**${named.name}** (${named.sku})\n\n${named.description ?? ''}\n\n` +
+      `List price ${formatINR(named.price)} per ${named.unit}, exclusive of GST and freight.${MOCK_NOTICE}`
+    )
+  }
+
+  const heightMatch = question.match(/(\d+(?:\.\d+)?)\s*(?:m\b|mtr|meter|metre)/i)
+  if (heightMatch) {
+    const wanted = Number(heightMatch[1])
+    // Descriptions carry the platform/working height, e.g. "10 m platform height".
+    const matched = rows.filter((p) => {
+      const found = (p.description ?? '').match(/(\d+(?:\.\d+)?)\s*m\b/)
+      return found ? Number(found[1]) >= wanted : false
+    })
+    if (matched.length) {
+      const list = matched
+        .slice(0, 5)
+        .map((p) => `| ${p.name} | ${formatINR(p.price)} |`)
+        .join('\n')
+      return `Models that cover ${wanted} m:\n\n| Model | List price |\n| --- | --- |\n${list}${MOCK_NOTICE}`
+    }
+    return `Nothing in the catalogue is listed as reaching ${wanted} m.${MOCK_NOTICE}`
+  }
+
+  const categories = [...new Set(rows.map((p) => p.category).filter(Boolean))] as string[]
+  const hit = categories.find((c) => q.includes(c.toLowerCase().replace(/s$/, '')))
+  if (hit) {
+    const list = rows
+      .filter((p) => p.category === hit)
+      .map((p) => `| ${p.name} | ${formatINR(p.price)} |`)
+      .join('\n')
+    return `**${hit}**:\n\n| Model | List price |\n| --- | --- |\n${list}${MOCK_NOTICE}`
+  }
+
+  return (
+    `The range covers: ${categories.join(', ')}. Ask about a working height ` +
+    `("which model reaches 12 m?"), a specific model, or a category.${MOCK_NOTICE}`
+  )
+}
+
+const PRODUCT_SYSTEM_PROMPT = `You are a Dingli India pre-sales assistant helping a dealer answer a customer's question about the Dingli aerial work platform range.
+
+Answer ONLY from the catalogue below — never invent a model, specification or price that is not listed. If the catalogue does not cover something (a spec that isn't listed, stock availability, lead times, discounts), say so plainly and suggest the dealer check with their Dingli India account manager.
+
+You are talking to a dealer, so be commercially useful: when someone describes a job (a working height, indoor or outdoor, a floor type, a duty cycle), recommend the specific model or models that fit and say briefly why. Working height already includes the operator's reach, so a machine should be rated at or just above the task height. Prices are list prices exclusive of GST and freight — say so whenever you quote one.
+
+When presenting more than two models, use a GitHub-flavored Markdown table with clear column headers. Keep answers short and concrete.`
+
+async function runProductChat(messages: Anthropic.MessageParam[], accessToken: string): Promise<string> {
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+
+  const { data: userData, error: userError } = await supabase.auth.getUser()
+  if (userError || !userData.user) {
+    throw new Error('unauthorized')
+  }
+
+  const { data: rows, error } = await supabase
+    .from('products')
+    .select('sku, name, category, unit, price, description')
+    .eq('is_active', true)
+    .order('category', { ascending: true })
+    .order('price', { ascending: true })
+
+  if (error) throw error
+  if (!rows || rows.length === 0) {
+    return "There are no products in the catalogue yet, so I can't answer product questions right now."
+  }
+
+  const catalogue = rows as CatalogueRow[]
+
+  if (!HAS_API_KEY) {
+    const question = extractUserText(messages[messages.length - 1]?.content ?? '')
+    return runProductChatMock(question, catalogue)
+  }
+
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    system: [
+      {
+        type: 'text',
+        // The catalogue is identical turn-to-turn, so cache it rather than
+        // re-billing the same input tokens on every follow-up question.
+        text: `${PRODUCT_SYSTEM_PROMPT}\n\n--- DINGLI PRODUCT CATALOGUE ---\n${catalogueToText(catalogue)}\n--- END CATALOGUE ---`,
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
+    messages,
+  })
+
+  return lastText(response.content)
+}
+
+// ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
@@ -637,6 +769,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return
     }
 
+    if (category === 'products') {
+      const reply = await runProductChat(messages, accessToken)
+      sendJson(res, 200, { reply })
+      return
+    }
+
     if (category === 'support') {
       if (!machineModel) {
         sendJson(res, 400, { error: 'Missing machineModel' })
@@ -647,7 +785,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return
     }
 
-    sendJson(res, 400, { error: 'category must be "dealer" or "support"' })
+    sendJson(res, 400, { error: 'category must be "dealer", "products" or "support"' })
   } catch (err) {
     if (err instanceof Error && err.message === 'unauthorized') {
       sendJson(res, 401, { error: 'Invalid or expired session' })

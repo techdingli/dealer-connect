@@ -30,6 +30,11 @@ export type Product = {
   sku: string
   name: string
   category: string | null
+  // Optional because the live `products` table has no column for either yet —
+  // see modelNumberOf()/vehicleTypeOf() in @/lib/products, which derive a
+  // sensible value from the SKU and category when these are absent.
+  model_number?: string | null
+  vehicle_type?: string | null
   unit: string
   price: number
   image_url: string | null
@@ -41,7 +46,10 @@ export type Product = {
 export type DingliStock = {
   id: string
   product_id: string
+  /** Named facility, e.g. "Chennai Depot". */
   warehouse: string
+  /** City the facility sits in — filtered separately from the warehouse. */
+  location?: string | null
   quantity: number
   updated_at: string
   product?: Product
@@ -52,9 +60,34 @@ export type DealerStock = {
   dealer_id: string
   product_id: string
   quantity: number
+  /** City the stock is held in. */
   location: string | null
+  /** Named yard/warehouse within that city. */
+  warehouse?: string | null
+  /** Purchase + sales history, shown when a row is opened on My Stock. */
+  movement?: StockMovement
   updated_at: string
   product?: Product
+}
+
+/** What a dealer paid for a stock line, and what they've sold out of it. */
+export type StockMovement = {
+  purchase: {
+    invoice_number: string
+    date: string
+    quantity: number
+    unit_cost: number
+    total_cost: number
+    supplier: string
+  }
+  sales: {
+    id: string
+    date: string
+    customer: string
+    quantity: number
+    unit_price: number
+    total: number
+  }[]
 }
 
 export type Invoice = {
