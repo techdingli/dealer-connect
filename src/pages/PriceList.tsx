@@ -1,36 +1,59 @@
 import { useMemo, useState } from 'react'
-import { Search, Tags, PackageSearch } from 'lucide-react'
+import { Search, Tags, PackageSearch, BookOpen } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SkeletonTable } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
 import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
+import { ManualViewer } from '@/components/ManualViewer'
 import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
-import { useProducts } from '@/hooks/queries'
+import { useProducts, useMachines } from '@/hooks/queries'
 import { formatCurrencyINR } from '@/lib/utils'
+import { modelNumberOf, vehicleTypeOf } from '@/lib/products'
 import type { Product } from '@/types/database'
 
 export default function PriceList() {
-  const { data: products, isLoading } = useProducts()
+  const { data: products, isLoading: productsLoading } = useProducts()
+  const { data: machines, isLoading: machinesLoading } = useMachines()
   const [search, setSearch] = useState('')
+  const [manualFor, setManualFor] = useState<{ model: string; text: string } | null>(null)
 
-  // The search box spans several columns at once, which a per-column filter
-  // can't do — so it runs first, and the column filters narrow what it returns.
+  const isLoading = productsLoading || machinesLoading
+
+  /**
+   * useMachines only ever returns models with a manual on file (the live query
+   * filters on manual_text), so this map is both the manual lookup and the
+   * test for whether a product belongs on this page at all.
+   */
+  const manualsByModel = useMemo(
+    () => new Map((machines ?? []).filter((m) => m.manual_text).map((m) => [m.model_name, m.manual_text!])),
+    [machines],
+  )
+
+  // This page deliberately lists only models with a manual — spare parts and
+  // the machine variants without one are excluded entirely.
+  const withManuals = useMemo(
+    () => (products ?? []).filter((p) => manualsByModel.has(modelNumberOf(p))),
+    [products, manualsByModel],
+  )
+
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase()
-    if (!query) return products ?? []
-    return (products ?? []).filter(
+    if (!query) return withManuals
+    return withManuals.filter(
       (p) => p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query),
     )
-  }, [products, search])
+  }, [withManuals, search])
 
   const columns = useMemo<ColumnDef<Product>[]>(
     () => [
-      { id: 'sku', label: 'SKU', type: 'text', accessor: (p) => p.sku },
+      { id: 'model', label: 'Model No.', type: 'select', accessor: (p) => modelNumberOf(p) },
       { id: 'name', label: 'Product', type: 'text', accessor: (p) => p.name },
       { id: 'category', label: 'Category', type: 'select', accessor: (p) => p.category },
+      { id: 'vehicle_type', label: 'Vehicle Type', type: 'select', accessor: (p) => vehicleTypeOf(p) },
       { id: 'unit', label: 'Unit', type: 'select', accessor: (p) => p.unit },
       { id: 'price', label: 'Price', type: 'number', accessor: (p) => p.price },
     ],
@@ -40,12 +63,18 @@ export default function PriceList() {
   const table = useTableFilters(searched, columns)
   const filtered = table.filteredRows
 
+  const openManual = (product: Product) => {
+    const model = modelNumberOf(product)
+    const text = manualsByModel.get(model)
+    if (text) setManualFor({ model, text })
+  }
+
   return (
     <div>
       <PageHeader
         eyebrow="Reference Data"
         title="Price List"
-        description="Current pricing across the full Dingli product range. Prices are exclusive of GST and freight unless noted."
+        description="Current pricing for every Dingli model with a service manual on file. Prices are exclusive of GST and freight unless noted."
       />
 
       <Card className="p-4">
@@ -62,13 +91,20 @@ export default function PriceList() {
           <FilterCount table={table} />
         </div>
 
-        {/* Phones don't render the table header, so the same filters appear as chips. */}
         <FilterBar columns={columns} table={table} className="mb-4 md:hidden" />
 
         {isLoading ? (
-          <SkeletonTable rows={6} cols={5} />
+          <SkeletonTable rows={6} cols={6} />
         ) : filtered.length === 0 ? (
-          <EmptyState icon={PackageSearch} title="No products found" description="Try a different search term or filter." />
+          <EmptyState
+            icon={PackageSearch}
+            title={withManuals.length === 0 ? 'No models with a manual on file' : 'No products found'}
+            description={
+              withManuals.length === 0
+                ? 'This page lists models that have a service manual loaded. None are available yet.'
+                : 'Try a different search term or filter.'
+            }
+          />
         ) : (
           <>
             {/* Card list — phones */}
@@ -78,7 +114,7 @@ export default function PriceList() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate font-medium text-base-50">{p.name}</p>
-                      <p className="font-mono text-xs text-base-400">{p.sku}</p>
+                      <p className="font-mono text-xs text-base-400">{modelNumberOf(p)}</p>
                     </div>
                     <p className="shrink-0 font-display font-semibold text-orange-400">
                       {formatCurrencyINR(p.price)}
@@ -93,6 +129,13 @@ export default function PriceList() {
                     )}
                     <span className="text-xs text-base-400">per {p.unit}</span>
                   </div>
+                  <button
+                    onClick={() => openManual(p)}
+                    className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-base-600 py-2 text-xs font-medium text-base-200 hover:border-orange-500/40 hover:text-orange-300"
+                  >
+                    <BookOpen className="size-3.5" />
+                    View manual
+                  </button>
                 </div>
               ))}
             </div>
@@ -102,17 +145,20 @@ export default function PriceList() {
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-base-600 text-left">
-                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[0]!} table={table} /></th>
-                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[1]!} table={table} /></th>
-                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[2]!} table={table} /></th>
-                    <th className="py-3 pr-4 font-medium"><ColumnFilter column={columns[3]!} table={table} /></th>
-                    <th className="py-3 pl-4 font-medium"><ColumnFilter column={columns[4]!} table={table} align="right" /></th>
+                    {columns.map((column) => (
+                      <th key={column.id} className="py-3 pr-4 font-medium">
+                        <ColumnFilter column={column} table={table} align={column.type === 'number' ? 'right' : 'left'} />
+                      </th>
+                    ))}
+                    <th className="py-3 pl-4 text-right text-xs font-medium uppercase tracking-wide text-base-400">
+                      Manual
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((p) => (
                     <tr key={p.id} className="border-b border-base-700/60 transition-colors hover:bg-base-700/30">
-                      <td className="py-3 pr-4 font-mono text-xs text-base-300">{p.sku}</td>
+                      <td className="whitespace-nowrap py-3 pr-4 font-mono text-xs text-base-200">{modelNumberOf(p)}</td>
                       <td className="py-3 pr-4">
                         <p className="font-medium text-base-50">{p.name}</p>
                         {p.description && <p className="mt-0.5 line-clamp-1 text-xs text-base-400">{p.description}</p>}
@@ -124,9 +170,19 @@ export default function PriceList() {
                           </Badge>
                         )}
                       </td>
+                      <td className="whitespace-nowrap py-3 pr-4 text-base-300">{vehicleTypeOf(p) || '—'}</td>
                       <td className="py-3 pr-4 text-base-300">{p.unit}</td>
-                      <td className="py-3 pl-4 text-right font-display font-semibold text-orange-300">
+                      <td className="py-3 pr-4 text-right font-display font-semibold text-orange-300">
                         {formatCurrencyINR(p.price)}
+                      </td>
+                      <td className="py-3 pl-4 text-right">
+                        <button
+                          onClick={() => openManual(p)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-base-600 px-2.5 py-1.5 text-xs font-medium text-base-200 transition-colors hover:border-orange-500/40 hover:text-orange-300"
+                        >
+                          <BookOpen className="size-3.5" />
+                          View
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -136,6 +192,16 @@ export default function PriceList() {
           </>
         )}
       </Card>
+
+      <Modal
+        open={!!manualFor}
+        onClose={() => setManualFor(null)}
+        title={manualFor ? `${manualFor.model} — Service Manual` : ''}
+        description="Search the manual, or scroll the sections below."
+        className="sm:max-w-3xl"
+      >
+        {manualFor && <ManualViewer manualText={manualFor.text} />}
+      </Modal>
     </div>
   )
 }

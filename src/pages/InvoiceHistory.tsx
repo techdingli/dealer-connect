@@ -46,11 +46,7 @@ export default function InvoiceHistory() {
 
   async function handleDownload(id: string, pdfPath: string | null) {
     if (!pdfPath) {
-      toast.info(
-        isDemo
-          ? 'PDF downloads are switched off in demo mode — use Print to save this invoice.'
-          : 'No PDF is attached to this invoice yet.',
-      )
+      toast.info('No PDF is attached to this invoice yet.')
       return
     }
     setDownloadingId(id)
@@ -208,6 +204,13 @@ export default function InvoiceHistory() {
                 #invoice-print-area { position: absolute; inset: 0; width: 100%; padding: 0; }
               }
             `}</style>
+
+            {isDemo && (
+              <p className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200 print:hidden">
+                Downloading gives you a watermarked <strong>sample</strong> invoice PDF — the same
+                document for every invoice here, not this one's figures.
+              </p>
+            )}
 
             <div className="flex items-center justify-between print:hidden">
               <Badge tone={toneForStatus(activeInvoice.status)}>{activeInvoice.status}</Badge>

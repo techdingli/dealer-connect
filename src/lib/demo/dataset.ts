@@ -230,8 +230,10 @@ function buildInvoices(dealer: Dealer, rng: Rng): Invoice[] {
       invoice_date: invoiceDate,
       amount,
       status,
-      // No PDFs exist in demo mode — the in-app invoice view prints instead.
-      pdf_path: null,
+      // Every demo invoice downloads the same watermarked sample PDF — see
+      // getInvoiceSignedUrl. Generating a distinct PDF per invoice would mean
+      // shipping a PDF writer to the browser for no demo value.
+      pdf_path: 'demo/sample-invoice.pdf',
       created_at: `${invoiceDate}T00:00:00.000Z`,
       invoice_items,
     })

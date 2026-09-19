@@ -100,7 +100,7 @@ export default function Dashboard() {
 
       {!productsLoading && products && (
         <p className="mt-8 text-center text-xs text-base-400">
-          {products.length} active products available in the current price list
+          {products.length} active products in the Dingli catalog
         </p>
       )}
     </div>

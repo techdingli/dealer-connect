@@ -164,7 +164,12 @@ export function useInvoiceDetail(invoiceId: string | null) {
   })
 }
 
+/** The one watermarked sample PDF every demo invoice downloads. */
+export const SAMPLE_INVOICE_URL = `${import.meta.env.BASE_URL}sample-invoice.pdf`
+
 export async function getInvoiceSignedUrl(pdfPath: string) {
+  if (DEMO_MODE) return SAMPLE_INVOICE_URL
+
   const { data, error } = await supabase.storage.from('invoices').createSignedUrl(pdfPath, 60 * 5)
   if (error) throw error
   return data.signedUrl

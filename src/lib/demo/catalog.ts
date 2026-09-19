@@ -200,13 +200,62 @@ const MODELS_WITH_MANUALS = new Set([
   'AMWP8-1000',
 ])
 
+/**
+ * A stand-in service manual, written to the same "N-N Heading" section
+ * convention the real manuals use — so splitManualIntoSections in api/chat.ts
+ * and the in-app reader parse these exactly as they parse the live ones.
+ */
+function buildManualText(seed: ProductSeed): string {
+  const electric = seed.vehicleType === 'Electric'
+  const height = seed.workingHeight ?? 0
+
+  return `${seed.name} — Service and Maintenance Manual
+
+1-1 Intended Use
+The ${seed.model} is an aerial work platform rated to ${height} m working height, intended for ${(seed.terrain ?? 'general').toLowerCase()} use. It is designed to raise personnel, tools and materials to a work position. Do not use it as a crane, a hoist, a jack or a support for any structure. Do not tow it on a public road. Any modification to the chassis, platform or control system voids the machine's declaration of conformity.
+
+1-2 Operator Requirements
+Only trained and authorised operators may use this machine. The operator must complete a familiarisation on this model, hold a valid operator card where local regulation requires one, and read this manual and the decals on the machine before first use. A harness with a short lanyard must be attached to the designated anchor point at all times on boom-type machines.
+
+2-1 Specifications
+Model: ${seed.model}. Working height: ${height} m. Drive: ${seed.vehicleType}. Category: ${seed.category}. Designed for: ${seed.terrain ?? 'general use'}. Refer to the serial plate on the chassis for the exact rated platform capacity, gross machine weight and maximum allowable inclination, which vary by build year.
+
+2-2 Platform and Capacity
+Never exceed the rated capacity shown on the platform decal. The rating includes the operator, tools and all materials. Distribute load evenly; a point load at the extreme edge of an extended deck can exceed the local limit even when the total is within rating. Guardrails must be in place and the gate latched before elevating.
+
+3-1 Daily Pre-Use Inspection
+Before every shift, with the platform lowered: check for hydraulic leaks at hoses, fittings and cylinder rods; check tyre condition and wheel nut torque; check that all decals are present and legible; test the emergency stop at both ground and platform stations; test the horn and any beacon; confirm the guardrails and gate are sound; and function-test lift and drive through their full range with no load.
+
+3-2 Service Intervals
+Pre-use inspection before every shift. A 250-hour service covering filter replacement, fluid level checks and a full function test. A 500-hour service adding a hydraulic oil change and a detailed structural inspection. An annual thorough examination by a competent person, recorded in the machine's log. Keep the log with the machine.
+
+4-1 ${electric ? 'Battery and Charging' : 'Engine and Fuel System'}
+${
+  electric
+    ? 'Charge only with the on-board charger supplied, on level ground with the platform fully lowered and the machine switched off. A full cycle from discharged takes 8 to 10 hours. Repeatedly interrupting a charge cycle shortens pack life significantly. On flooded packs, check electrolyte level monthly and top up with distilled water only after charging, never before. Clean terminal corrosion with a bicarbonate solution and re-grease the terminals.'
+    : 'Check engine oil and coolant daily with the machine on level ground and the engine cold. Use only the fuel grade specified on the filler decal. Replace the fuel filter at each 250-hour service and bleed the system afterwards. Do not run the tank to empty; drawing air into the injection system requires a full bleed to recover. Keep the radiator core clear of site debris.'
+}
+
+4-2 Hydraulic System
+Check the hydraulic reservoir level with the platform fully lowered — reading it with the platform raised gives a false low and leads to overfilling. A light film of oil on a cylinder rod is normal and is what lubricates the seal; running drips or a pooling leak mean the rod seal kit is due. Use only the hydraulic oil grade listed on the reservoir decal. After any hose replacement, cycle the machine through its full range three times with no load to purge air.
+
+5-1 Tilt Sensor, Fault Codes and Interlocks
+A tilt fault reported on visibly level ground is usually the sensor itself or a loose mounting bracket rather than the chassis. Recalibrate on a surface confirmed level with a spirit level; if the fault returns after a successful recalibration, replace the sensor. Drive speed is limited above the interlock height by design, and on some builds drive is cut entirely — this is not a fault. Check the platform height limit switch before investigating the drive motor.
+
+5-2 Emergency Lowering
+The emergency lowering valve is at the base of the lift cylinder and is marked with a red decal. Pull and hold to descend. It should operate under firm hand pressure. If it needs excessive force, the valve requires servicing — never lever it or extend the handle. Ensure the area beneath the platform is clear before operating it, and brief ground personnel on its location before every shift.
+
+6-1 Common Faults and Remedies
+Platform will not elevate: check the emergency stops are released, the battery or fuel state, and that the machine is within its allowable inclination. Machine creeps with the joystick centred: the joystick needs recalibration or the drive valve is sticking. Platform descends slowly under load: suspect a worn cylinder seal or a partially blocked return filter. Charger will not start a cycle: confirm mains supply, then check the interlock that prevents charging with the platform raised.`
+}
+
 export const DEMO_MACHINES: Machine[] = PRODUCT_SEEDS.filter((seed) =>
   MODELS_WITH_MANUALS.has(seed.model),
 ).map((seed, i) => ({
   id: `demo-machine-${i + 1}`,
   model_name: seed.model,
   category: seed.category,
-  manual_text: `${seed.name} service manual (demo excerpt). ${seed.description}`,
+  manual_text: buildManualText(seed),
   manual_source: 'demo',
   created_at: isoTimestampDaysAgo(300),
 }))
