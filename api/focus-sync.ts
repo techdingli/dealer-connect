@@ -256,8 +256,11 @@ async function invoiceLines(pool: sql.ConnectionPool, headerIds: number[]): Prom
 
 /**
  * Bill-wise outstanding per invoice. A tCore_Refrn_0 row with iRefType 0 opens
- * a bill (its iRef is the bill), later rows adjust it; the bill's balance is
- * the sum of every row on that iRef for the dealer's accounts.
+ * a bill (its iRef is the bill) on one of the dealer's posting lines; later
+ * rows (receipts, returns, advances) adjust it. iAccount on these rows is the
+ * contra account, so bills are found through the dealer's own lines instead.
+ * Amounts are from the contra side: a sale opens the bill negative, so the
+ * dealer still owes minus the sum.
  */
 async function billBalances(
   pool: sql.ConnectionPool,
@@ -268,10 +271,13 @@ async function billBalances(
     pool,
     `SELECT MIN(CASE WHEN r.iRefType = 0 THEN d.iHeaderId END) AS headerId,
             MIN(CASE WHEN r.iRefType = 0 THEN r.iDueDate END) AS due,
-            SUM(r.mAmount) AS outstanding
+            -SUM(r.mAmount) AS outstanding
        FROM tCore_Refrn_0 r
        JOIN tCore_Data_0 d ON d.iBodyId = r.iBodyId
-      WHERE r.iAccount IN (${ids})
+      WHERE r.iRef IN (
+              SELECT r0.iRef FROM tCore_Refrn_0 r0
+                JOIN tCore_Data_0 d0 ON d0.iBodyId = r0.iBodyId
+               WHERE r0.iRefType = 0 AND (d0.iBookNo IN (${ids}) OR d0.iCode IN (${ids})))
       GROUP BY r.iRef`,
   )
   const out = new Map<number, { outstanding: number; due: string | null }>()
@@ -296,35 +302,78 @@ type CatalogProduct = {
   description: string | null
 }
 
-/** Equipment with a category, plus anything a synced dealer has been invoiced for. */
-async function catalogProducts(pool: sql.ConnectionPool, extraIds: number[]): Promise<CatalogProduct[]> {
+// Product groups (top of Focus's product tree) that make up the dealer
+// catalogue: the machines and their spare parts. Everything else in Focus
+// (raw material, WIP, safety stock, rental service charges) stays out.
+const EQUIPMENT_GROUP = 'Inventory - Equipments'
+const SPARES_GROUP = 'Spare Parts'
+
+/**
+ * Machines and spare parts. Focus's own category field is mostly blank on
+ * machines, so a machine's category is the Focus category name its product
+ * name starts with ("Boom Lift Self-Propelled 28 Mtr" -> "Boom Lift").
+ */
+async function catalogProducts(pool: sql.ConnectionPool): Promise<CatalogProduct[]> {
   const rows = await q(
     pool,
-    `SELECT p.iMasterId AS id, p.sCode AS sku, p.sName AS name, c.sName AS category,
-            un.sName AS unit, mu.sDescription AS description
+    `SELECT p.iMasterId AS id, p.sCode AS sku, p.sName AS name, g.sName AS grp,
+            c.sName AS category, un.sName AS unit, mu.sDescription AS description
        FROM mCore_Product p
+       JOIN mCore_ProductTreeDetails t ON t.iMasterId = p.iMasterId
+       JOIN mCore_Product g ON g.iMasterId = t.iParentId AND g.bGroup = 1
        LEFT JOIN muCore_Product mu ON mu.iMasterId = p.iMasterId
        LEFT JOIN mCore_productcategory c ON c.iMasterId = mu.iCategory AND mu.iCategory > 0
        LEFT JOIN muCore_Product_Units pu ON pu.iMasterId = p.iMasterId
        LEFT JOIN mCore_Units un ON un.iMasterId = pu.iDefaultSalesUnit
-      WHERE p.bGroup = 0 AND p.iMasterId > 0 AND p.sName NOT LIKE 'to be deleted%'
-        AND (mu.iCategory > 0 OR p.iMasterId IN (${idList(extraIds)}))`,
+      WHERE p.bGroup = 0 AND g.sName IN (@equipment, @spares)
+        AND p.sName NOT LIKE 'to be deleted%'`,
+    { equipment: EQUIPMENT_GROUP, spares: SPARES_GROUP },
   )
-  return rows
-    .filter((r) => String(r.sku ?? '').trim())
-    .map((r) => ({
-      focus_product_id: Number(r.id),
-      sku: String(r.sku).trim(),
-      name: String(r.name ?? '').trim() || String(r.sku).trim(),
-      category: String(r.category ?? '').trim() || null,
+  const categoryNames = (
+    await q(pool, `SELECT sName AS n FROM mCore_productcategory WHERE bGroup = 0 AND iMasterId > 0`)
+  )
+    .map((r) => String(r.n ?? '').trim())
+    .filter((n) => n.length > 3)
+    // Longest first, so "Mast Boom Lift" wins over "Boom Lift".
+    .sort((a, b) => b.length - a.length)
+
+  const seen = new Set<number>()
+  const out: CatalogProduct[] = []
+  for (const r of rows) {
+    const id = Number(r.id)
+    const sku = String(r.sku ?? '').trim()
+    if (!sku || seen.has(id)) continue
+    seen.add(id)
+    const name = String(r.name ?? '').trim() || sku
+    let category: string | null
+    if (String(r.grp).trim() === SPARES_GROUP) {
+      category = 'Spare Parts'
+    } else {
+      const lower = name.toLowerCase()
+      category =
+        categoryNames.find((c) => lower.startsWith(c.toLowerCase())) ??
+        (String(r.category ?? '').trim() || 'Equipment')
+    }
+    out.push({
+      focus_product_id: id,
+      sku,
+      name,
+      category,
       unit: String(r.unit ?? '').trim() || 'Nos',
       description: String(r.description ?? '').trim() || null,
-    }))
+    })
+  }
+  return out
 }
 
 type StockRow = { focus_product_id: number; focus_warehouse_id: number; warehouse: string; quantity: number }
 
-/** Positive on-hand balances per product and warehouse for the catalogue products. */
+/**
+ * Positive on-hand balances per product and warehouse for the catalogue
+ * products. Focus warehouses are named <company>-<branch>-<division>-<store>;
+ * only the Sales division is stock a dealer can buy (Rental, Factory and
+ * service stores are excluded).
+ */
 async function dingliStock(pool: sql.ConnectionPool, productIds: number[]): Promise<StockRow[]> {
   const out: StockRow[] = []
   for (const part of chunks(productIds, 2000)) {
@@ -334,7 +383,7 @@ async function dingliStock(pool: sql.ConnectionPool, productIds: number[]): Prom
               SUM(b.fQrec + b.fQiss) AS qty
          FROM tCore_ibals_0 b
          JOIN mCore_Warehouse w ON w.iMasterId = b.iInvTag AND w.bGroup = 0
-        WHERE b.iProduct IN (${idList(part)})
+        WHERE b.iProduct IN (${idList(part)}) AND w.sName LIKE '%-Sales-%'
         GROUP BY b.iProduct, b.iInvTag, w.sName
        HAVING SUM(b.fQrec + b.fQiss) > 0`,
     )
@@ -603,11 +652,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       dealers.push(await buildDealer(pool, gstin, own))
     }
 
-    const invoicedProducts = dealers.flatMap((d) => d.items.map((i) => Number(i.focus_product_id)))
-    const products = await catalogProducts(pool, invoicedProducts)
+    const products = await catalogProducts(pool)
     const stock = await dingliStock(
       pool,
-      products.filter((p) => p.category).map((p) => p.focus_product_id),
+      products.map((p) => p.focus_product_id),
     )
 
     const summary = {
