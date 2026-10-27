@@ -1,5 +1,39 @@
 # Pending: Focus data sync
 
+## Live sync from Focus UAT (added 2026-10-27)
+
+`api/focus-sync.ts` now reads Focus directly from Vercel (the UAT SQL Server is reachable
+from Vercel functions) and writes Supabase daily via the cron in `vercel.json`. It
+supersedes the manual resync below for the dealers it covers — **running it replaces
+those dealers' existing `dealer_ledger` rows with the Focus UAT data.**
+
+To switch it on:
+1. Apply `supabase/migrations/0008_focus_sync.sql` to the dealer-connect Supabase project.
+2. In Vercel (Production): `SUPABASE_URL` (absolute https URL), `SUPABASE_SERVICE_ROLE_KEY`,
+   `CRON_SECRET`.
+3. Trigger once: `/api/focus-sync?token=<CRON_SECRET>`; check `focus_sync_runs`.
+4. Set each dealer login's `profiles.gstin` (admin-only now — a trigger stops dealers
+   changing their own GSTIN or role), then set `VITE_DEMO_MODE=false` and redeploy.
+
+Scope is every GSTIN in `dealer_directory` or on a profile. `?dryRun=1&gstin=…` maps
+without writing; `?action=find&q=name` finds a dealer's Focus accounts and GSTIN (this
+is how Maruti and Advent can get their missing GSTINs — Focus UAT has them).
+
+Not in the Focus UAT data, shown in the UI as "Not in the UAT data yet" (`UatDataNotice`):
+selling prices, Dingli model numbers (so manuals can't be matched to Focus products),
+invoice PDFs, a dealer's current holdings / yards / onward sales, warehouse cities.
+**When production Focus tables are available: re-run discovery against them, point the
+sync at production, fill these in, and remove the notices.**
+
+Mapping notes (Focus8070): ledger = `tCore_Data_0` lines where the dealer's account is
+`iBookNo` (amount `mAmount1`) or `iCode` (amount `-mAmount1`), vouchers with
+`bUpdateFA = 1`; invoice status from bill references in `tCore_Refrn_0` (found via the
+dealer's own lines — `iAccount` there is the contra account); catalogue = product groups
+"Inventory - Equipments" and "Spare Parts"; Dingli stock = `tCore_ibals_0` in `-Sales-`
+warehouses.
+
+## Earlier manual resync
+
 Status as of 2026-09-18. Tracks what's left after the first Focus → Supabase sync pass.
 
 ## To run
