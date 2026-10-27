@@ -700,6 +700,17 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       })
       if (error) throw new Error(`focus_sync_dealer(${d.gstin}): ${error.message}`)
     }
+    // Drop rows for GSTINs that have left the scope (e.g. a corrected directory
+    // entry), so a dealer's data never outlives their place in the portal.
+    // Skipped when the scope is empty, so a failed read can't wipe everything.
+    if (gstins.length) {
+      const keep = `(${gstins.map((g) => g.replace(/[^A-Z0-9]/g, '')).join(',')})`
+      for (const table of ['dealer_ledger', 'dealer_invoices'] as const) {
+        const { error } = await sb!.from(table).delete().not('gstin', 'in', keep)
+        if (error) throw new Error(`${table} cleanup: ${error.message}`)
+      }
+    }
+
     // Batched: the catalogue is ~10k rows, too much for one request body.
     for (const batch of chunks(products, 1500)) {
       const { error } = await sb!.rpc('focus_upsert_products', { p_products: batch })
