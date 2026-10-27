@@ -14,9 +14,9 @@ import { UatDataNotice } from '@/components/UatDataNotice'
 import { DEMO_MODE } from '@/config/demo'
 
 const QUICK_LINKS = [
-  { to: '/price-list', label: 'Price List', description: 'Browse the full Dingli product catalog & pricing', icon: Tags },
+  { to: '/price-list', label: 'Price List', description: 'Browse every machine in the Dingli catalogue', icon: Tags },
   { to: '/dingli-stock', label: 'Dingli India Stock', description: 'Live availability across Dingli India warehouses', icon: Warehouse },
-  { to: '/my-stock', label: 'My Stock', description: 'Machines currently held at your dealership', icon: Boxes },
+  { to: '/my-stock', label: 'My Stock', description: 'Machines and parts Dingli has invoiced to you', icon: Boxes },
   { to: '/invoices', label: 'Invoice History', description: 'Every invoice raised against your dealership', icon: Receipt },
   { to: '/ledger', label: 'Ledger', description: 'Your running account statement', icon: ScrollText },
   { to: '/service-requests', label: 'Service Requests', description: 'Raise & track machine service tickets', icon: Wrench },

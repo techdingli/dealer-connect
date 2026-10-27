@@ -61,7 +61,7 @@ export default function Ledger() {
       <PageHeader
         eyebrow={CURRENT_FY}
         title="Ledger"
-        description="Payments, receipts, invoices and adjustments recorded against your account, as synced from Focus."
+        description="Payments, receipts, invoices and adjustments recorded against your account, as synced from Focus UAT."
       />
 
       <div className="mb-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -79,8 +79,8 @@ export default function Ledger() {
       </div>
 
       <p className="mb-6 text-xs text-base-400">
-        Balance is computed from the entries shown below and may not reflect your full statement of account — some
-        invoices may not yet be consistently included in what's synced from Focus.
+        Every entry posted to your account in Focus UAT — invoices, receipts, returns and adjustments. The balance
+        is worked out from these entries, so it matches your statement of account in the UAT system.
       </p>
 
       <Card className="p-4">
