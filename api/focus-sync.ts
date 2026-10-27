@@ -528,13 +528,61 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           WHERE (d.iBookNo IN (${ids}) OR d.iCode IN (${ids})) AND h.bCancelled = 0
           ORDER BY h.iDate DESC, h.iHeaderId DESC`,
       )
+      const refs = await q(
+        pool,
+        `SELECT TOP 60 r.iRef AS ref, r.iRefType AS refType, r.iBodyId AS bodyId, r.iAccount AS account,
+                r.mAmount AS amount, r.iDueDate AS due, h.sVoucherNo AS voucherNo, v.sName AS voucherType
+           FROM tCore_Refrn_0 r
+           LEFT JOIN tCore_Data_0 d ON d.iBodyId = r.iBodyId
+           LEFT JOIN tCore_Header_0 h ON h.iHeaderId = d.iHeaderId
+           LEFT JOIN cCore_Vouchers_0 v ON v.iVoucherType = h.iVoucherType
+          WHERE r.iAccount IN (${ids}) OR d.iBookNo IN (${ids}) OR d.iCode IN (${ids})
+          ORDER BY r.iRef, r.iRefType`,
+      )
       return send(res, 200, {
         ok: true,
         ms: Date.now() - started,
         accounts,
         byVoucherType: byType,
         recent: recent.map((r) => ({ ...r, date: focusDate(r.iDate) })),
+        refs: refs.map((r) => ({ ...r, due: focusDate(r.due) })),
       })
+    }
+
+    if (action === 'inspect-catalog') {
+      // Product groups (the tree Focus users file items under) with how many
+      // leaf products and how much on-hand stock sit beneath each one.
+      const groups = await q(
+        pool,
+        `SELECT g.iMasterId AS id, g.sName AS name, g.sCode AS code, t.iLevel AS level,
+                pt.iMasterId AS parentId,
+                (SELECT COUNT(*) FROM mCore_ProductTreeDetails c
+                   JOIN mCore_Product cp ON cp.iMasterId = c.iMasterId AND cp.bGroup = 0
+                  WHERE c.iParentId = g.iMasterId) AS leaves
+           FROM mCore_Product g
+           JOIN mCore_ProductTreeDetails t ON t.iMasterId = g.iMasterId
+           LEFT JOIN mCore_ProductTreeDetails pt ON pt.iMasterId = t.iParentId AND pt.iTreeId = t.iTreeId
+          WHERE g.bGroup = 1
+          ORDER BY t.iLevel, g.sName`,
+      )
+      const warehouses = await q(
+        pool,
+        `SELECT TOP 80 w.sName AS warehouse, COUNT(DISTINCT b.iProduct) AS products,
+                SUM(b.fQrec + b.fQiss) AS qty
+           FROM tCore_ibals_0 b
+           JOIN mCore_Warehouse w ON w.iMasterId = b.iInvTag
+          GROUP BY w.sName
+         HAVING SUM(b.fQrec + b.fQiss) > 0
+          ORDER BY products DESC`,
+      )
+      const skuPrefixes = await q(
+        pool,
+        `SELECT LEFT(p.sCode, 1) AS prefix, COUNT(*) AS products,
+                MIN(p.sName) AS example
+           FROM mCore_Product p WHERE p.bGroup = 0
+          GROUP BY LEFT(p.sCode, 1) ORDER BY products DESC`,
+      )
+      return send(res, 200, { ok: true, ms: Date.now() - started, groups, warehouses, skuPrefixes })
     }
 
     // Sync (or dry run).
