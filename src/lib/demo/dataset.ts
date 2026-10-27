@@ -125,7 +125,7 @@ function buildMovement(
 
   // Dealers buy under list and sell above what they paid — that spread is the
   // whole point of the purchase/sale view.
-  const unitCost = Math.round((product.price * (1 - rng.int(8, 20) / 100)) / 100) * 100
+  const unitCost = Math.round(((product.price ?? 0) * (1 - rng.int(8, 20) / 100)) / 100) * 100
   const purchaseDaysAgo = rng.int(60, 540)
 
   let remainingToSell = soldQty
@@ -202,7 +202,7 @@ function buildInvoices(dealer: Dealer, rng: Rng): Invoice[] {
     const invoice_items: InvoiceItem[] = lineProducts.map((product, j) => {
       const quantity = product.category === 'Spare Parts' ? rng.int(1, 12) : rng.int(1, 3)
       // Dealer pricing sits a little under list — vary the discount per line.
-      const unit_price = Math.round((product.price * (1 - rng.int(4, 14) / 100)) / 100) * 100
+      const unit_price = Math.round(((product.price ?? 0) * (1 - rng.int(4, 14) / 100)) / 100) * 100
       return {
         id: `${invoiceId}-item-${j + 1}`,
         invoice_id: invoiceId,

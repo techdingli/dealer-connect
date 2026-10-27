@@ -10,6 +10,8 @@ import { SkeletonTable } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
 import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
 import { LastUpdated } from '@/components/ui/LastUpdated'
+import { NotInUat, UatDataNotice } from '@/components/UatDataNotice'
+import { DEMO_MODE } from '@/config/demo'
 import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useDealerStock } from '@/hooks/queries'
 import { formatCurrencyINR, formatDate } from '@/lib/utils'
@@ -24,20 +26,23 @@ function StockDetail({ row }: { row: DealerStockRow }) {
     return <p className="text-sm text-base-400">No purchase or sales history is recorded for this line.</p>
   }
 
+  // sales is null for live (Focus) lines: Dingli's books only show the sale to
+  // the dealer, not what the dealer did with it afterwards.
   const { purchase, sales } = movement
-  const unitsSold = sales.reduce((sum, s) => sum + s.quantity, 0)
-  const revenue = sales.reduce((sum, s) => sum + s.total, 0)
+  const unitsSold = sales?.reduce((sum, s) => sum + s.quantity, 0) ?? 0
+  const revenue = sales?.reduce((sum, s) => sum + s.total, 0) ?? 0
   const costOfSold = unitsSold * purchase.unit_cost
   const margin = revenue - costOfSold
+  const units = (n: number) => `${n} ${n === 1 ? 'unit' : 'units'}`
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
-          { label: 'On hand', value: `${row.quantity} ${row.quantity === 1 ? 'unit' : 'units'}` },
-          { label: 'Purchased', value: `${purchase.quantity} ${purchase.quantity === 1 ? 'unit' : 'units'}` },
-          { label: 'Sold', value: `${unitsSold} ${unitsSold === 1 ? 'unit' : 'units'}` },
-          { label: 'Margin to date', value: formatCurrencyINR(margin) },
+          { label: 'On hand', value: sales ? units(row.quantity) : <NotInUat /> },
+          { label: 'Purchased', value: units(purchase.quantity) },
+          { label: 'Sold', value: sales ? units(unitsSold) : <NotInUat /> },
+          { label: 'Margin to date', value: sales ? formatCurrencyINR(margin) : <NotInUat /> },
         ].map((stat) => (
           <div key={stat.label} className="rounded-xl border border-base-600 p-3">
             <p className="text-[11px] uppercase tracking-wide text-base-400">{stat.label}</p>
@@ -75,7 +80,12 @@ function StockDetail({ row }: { row: DealerStockRow }) {
           <TrendingUp className="size-4 text-green-400" />
           Sales
         </h4>
-        {sales.length === 0 ? (
+        {!sales ? (
+          <UatDataNotice>
+            Your sales to your own customers aren't recorded in Dingli's Focus system, so they can't
+            be shown here from the UAT data.
+          </UatDataNotice>
+        ) : sales.length === 0 ? (
           <p className="rounded-xl border border-dashed border-base-600 p-4 text-center text-sm text-base-400">
             Nothing sold from this line yet — all {row.quantity} still on hand.
           </p>
@@ -169,9 +179,19 @@ export default function DealerStock() {
       <PageHeader
         eyebrow="Your Dealership"
         title="My Stock"
-        description="Machines and units currently held at your dealership location(s). Select a line to see what it cost and what's sold."
+        description={
+          DEMO_MODE
+            ? "Machines and units currently held at your dealership location(s). Select a line to see what it cost and what's sold."
+            : 'Machines and parts Dingli India has invoiced to you, as synced from Focus. Select a line to see the purchase.'
+        }
         action={<LastUpdated value={lastUpdated} />}
       />
+
+      <UatDataNotice className="mb-4">
+        Focus only records what Dingli invoiced to you, not what you hold today, which yard it's in,
+        or what you've sold on. Quantities here are quantities purchased; warehouse, location and
+        sales will appear once that data is available.
+      </UatDataNotice>
 
       <Card className="p-4">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

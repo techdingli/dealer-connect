@@ -9,6 +9,8 @@ import { SkeletonTable } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
 import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
 import { ManualViewer } from '@/components/ManualViewer'
+import { NotInUat, UatDataNotice } from '@/components/UatDataNotice'
+import { DEMO_MODE } from '@/config/demo'
 import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useProducts, useMachines } from '@/hooks/queries'
 import { formatCurrencyINR } from '@/lib/utils'
@@ -33,12 +35,16 @@ export default function PriceList() {
     [machines],
   )
 
-  // This page deliberately lists only models with a manual — spare parts and
-  // the machine variants without one are excluded entirely.
+  // The demo catalogue lists only models with a manual — spare parts and the
+  // machine variants without one are excluded entirely. Live products come
+  // from Focus, whose UAT data has no Dingli model numbers to match a manual
+  // against, so every machine is listed and the manual button shows where a
+  // match exists.
   const withManuals = useMemo(
-    () => (products ?? []).filter((p) => manualsByModel.has(modelNumberOf(p))),
+    () => (DEMO_MODE ? (products ?? []).filter((p) => manualsByModel.has(modelNumberOf(p))) : (products ?? [])),
     [products, manualsByModel],
   )
+  const hasManual = (p: Product) => manualsByModel.has(modelNumberOf(p))
 
   const searched = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -74,8 +80,18 @@ export default function PriceList() {
       <PageHeader
         eyebrow="Reference Data"
         title="Price List"
-        description="Current pricing for every Dingli model with a service manual on file. Prices are exclusive of GST and freight unless noted."
+        description={
+          DEMO_MODE
+            ? 'Current pricing for every Dingli model with a service manual on file. Prices are exclusive of GST and freight unless noted.'
+            : 'Every machine in the Dingli product catalogue, as synced from Focus.'
+        }
       />
+
+      <UatDataNotice className="mb-4">
+        The Focus UAT database has no selling prices and no Dingli model numbers, so prices show as
+        “Not in UAT data” and service manuals can only be opened where a model can be matched. Both
+        will fill in once production Focus is connected.
+      </UatDataNotice>
 
       <Card className="p-4">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -98,10 +114,18 @@ export default function PriceList() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={PackageSearch}
-            title={withManuals.length === 0 ? 'No models with a manual on file' : 'No products found'}
+            title={
+              withManuals.length === 0
+                ? DEMO_MODE
+                  ? 'No models with a manual on file'
+                  : 'No products synced yet'
+                : 'No products found'
+            }
             description={
               withManuals.length === 0
-                ? 'This page lists models that have a service manual loaded. None are available yet.'
+                ? DEMO_MODE
+                  ? 'This page lists models that have a service manual loaded. None are available yet.'
+                  : 'Products appear here after the Focus sync has run.'
                 : 'Try a different search term or filter.'
             }
           />
@@ -117,7 +141,7 @@ export default function PriceList() {
                       <p className="font-mono text-xs text-base-400">{modelNumberOf(p)}</p>
                     </div>
                     <p className="shrink-0 font-display font-semibold text-orange-400">
-                      {formatCurrencyINR(p.price)}
+                      {p.price == null ? <NotInUat /> : formatCurrencyINR(p.price)}
                     </p>
                   </div>
                   {p.description && <p className="mt-2 text-xs text-base-400">{p.description}</p>}
@@ -129,13 +153,15 @@ export default function PriceList() {
                     )}
                     <span className="text-xs text-base-400">per {p.unit}</span>
                   </div>
-                  <button
-                    onClick={() => openManual(p)}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-base-600 py-2 text-xs font-medium text-base-200 hover:border-orange-500/40 hover:text-orange-300"
-                  >
-                    <BookOpen className="size-3.5" />
-                    View manual
-                  </button>
+                  {hasManual(p) && (
+                    <button
+                      onClick={() => openManual(p)}
+                      className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-base-600 py-2 text-xs font-medium text-base-200 hover:border-orange-500/40 hover:text-orange-300"
+                    >
+                      <BookOpen className="size-3.5" />
+                      View manual
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -173,16 +199,20 @@ export default function PriceList() {
                       <td className="whitespace-nowrap py-3 pr-4 text-base-300">{vehicleTypeOf(p) || '—'}</td>
                       <td className="py-3 pr-4 text-base-300">{p.unit}</td>
                       <td className="py-3 pr-4 text-right font-display font-semibold text-orange-300">
-                        {formatCurrencyINR(p.price)}
+                        {p.price == null ? <NotInUat /> : formatCurrencyINR(p.price)}
                       </td>
                       <td className="py-3 pl-4 text-right">
-                        <button
-                          onClick={() => openManual(p)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-base-600 px-2.5 py-1.5 text-xs font-medium text-base-200 transition-colors hover:border-orange-500/40 hover:text-orange-300"
-                        >
-                          <BookOpen className="size-3.5" />
-                          View
-                        </button>
+                        {hasManual(p) ? (
+                          <button
+                            onClick={() => openManual(p)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-base-600 px-2.5 py-1.5 text-xs font-medium text-base-200 transition-colors hover:border-orange-500/40 hover:text-orange-300"
+                          >
+                            <BookOpen className="size-3.5" />
+                            View
+                          </button>
+                        ) : (
+                          <span className="text-base-500">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -14,6 +14,7 @@ import { useDingliStock } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
 import { modelNumberOf, vehicleTypeOf } from '@/lib/products'
 import { exportToCsv } from '@/lib/csv'
+import { UatDataNotice } from '@/components/UatDataNotice'
 import type { DingliStock as DingliStockRow } from '@/types/database'
 
 export default function DingliStock() {
@@ -77,6 +78,12 @@ export default function DingliStock() {
         description="Live availability across Dingli India's central warehouses. Reach out to your account manager to place a hold."
         action={<LastUpdated value={lastUpdated} />}
       />
+
+      <UatDataNotice className="mb-4">
+        Quantities are on-hand stock in Dingli's sales warehouses, synced from Focus. The UAT data
+        doesn't record which city each warehouse is in, so Location is blank until production Focus
+        is connected.
+      </UatDataNotice>
 
       <Card className="p-4">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

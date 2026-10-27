@@ -337,13 +337,14 @@ async function catalogProducts(pool: sql.ConnectionPool): Promise<CatalogProduct
     // Longest first, so "Mast Boom Lift" wins over "Boom Lift".
     .sort((a, b) => b.length - a.length)
 
-  const seen = new Set<number>()
+  // products.sku is unique in Supabase, so a SKU Focus reuses is kept once.
+  const seen = new Set<string>()
   const out: CatalogProduct[] = []
   for (const r of rows) {
     const id = Number(r.id)
     const sku = String(r.sku ?? '').trim()
-    if (!sku || seen.has(id)) continue
-    seen.add(id)
+    if (!sku || seen.has(sku.toLowerCase())) continue
+    seen.add(sku.toLowerCase())
     const name = String(r.name ?? '').trim() || sku
     let category: string | null
     if (String(r.grp).trim() === SPARES_GROUP) {
@@ -699,8 +700,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       })
       if (error) throw new Error(`focus_sync_dealer(${d.gstin}): ${error.message}`)
     }
-    const { error: catErr } = await sb!.rpc('focus_sync_catalog', { p_products: products, p_stock: stock })
-    if (catErr) throw new Error(`focus_sync_catalog: ${catErr.message}`)
+    // Batched: the catalogue is ~10k rows, too much for one request body.
+    for (const batch of chunks(products, 1500)) {
+      const { error } = await sb!.rpc('focus_upsert_products', { p_products: batch })
+      if (error) throw new Error(`focus_upsert_products: ${error.message}`)
+    }
+    const { error: stockErr } = await sb!.rpc('focus_replace_stock', {
+      p_active_product_ids: products.map((p) => p.focus_product_id),
+      p_stock: stock,
+    })
+    if (stockErr) throw new Error(`focus_replace_stock: ${stockErr.message}`)
 
     const result = { ok: true, ms: Date.now() - started, ...summary }
     await sb!.from('focus_sync_runs').insert({ ok: true, ms: result.ms, summary })

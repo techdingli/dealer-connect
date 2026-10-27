@@ -93,7 +93,7 @@ const DEALER_TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_invoices',
     description:
-      "Get a SUMMARY of the signed-in dealer's invoices for the current financial year: total invoiced amount, invoice count by status (paid/unpaid/overdue), and the most recent invoice. Does not include line items or the full invoice list — call get_invoice_detail for that.",
+      "Get a SUMMARY of the signed-in dealer's invoices as recorded in Focus: total invoiced amount, total still outstanding, invoice count by status (paid/unpaid/overdue, or unknown where Focus has no bill reference), and the most recent invoice. Does not include line items or the full invoice list — call get_invoice_detail for that.",
     input_schema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -119,7 +119,7 @@ const DEALER_TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_ledger',
     description:
-      "Get a SUMMARY of the signed-in dealer's ledger as recorded in Focus: total debit, total credit, entry count, the date range covered, and a breakdown by voucher type with subtotals. Payments and adjustments only — invoices are not consistently included, and there is no running balance. Does not include individual entries — call get_ledger_detail for that.",
+      "Get a SUMMARY of the signed-in dealer's ledger as recorded in Focus: total debit, total credit, entry count, the date range covered, and a breakdown by voucher type with subtotals. Includes invoices, receipts, returns and adjustments; total debit minus total credit is the balance the dealer owes. Does not include individual entries — call get_ledger_detail for that.",
     input_schema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -152,7 +152,8 @@ const DEALER_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'get_dealer_stock',
-    description: "Get the machines/units currently held at the signed-in dealer's own location(s).",
+    description:
+      "Get the machines and spare parts Dingli has invoiced to the signed-in dealer (product, quantity, price, invoice). Focus does not record what the dealer currently holds, where, or what they have sold on — say so if asked.",
     input_schema: { type: 'object', properties: {}, required: [] },
   },
 ]
@@ -168,6 +169,7 @@ type LedgerSummary = {
 type InvoiceSummary = {
   invoice_count: number
   total_amount: number
+  total_outstanding: number
   by_status: { status: string; count: number }[]
   most_recent_invoice: { invoice_number: string; invoice_date: string; amount: number; status: string } | null
 }
@@ -202,12 +204,17 @@ function summarizeLedger(entries: { entry_date: string; voucher_type: string | n
   }
 }
 
-function summarizeInvoices(invoices: { invoice_number: string; invoice_date: string; amount: number; status: string }[]): InvoiceSummary {
+function summarizeInvoices(
+  invoices: { invoice_number: string; invoice_date: string; amount: number; outstanding: number | null; status: string | null }[],
+): InvoiceSummary {
   const byStatus = new Map<string, number>()
   let totalAmount = 0
+  let totalOutstanding = 0
   for (const inv of invoices) {
     totalAmount += Number(inv.amount)
-    byStatus.set(inv.status, (byStatus.get(inv.status) ?? 0) + 1)
+    totalOutstanding += Number(inv.outstanding ?? 0)
+    const status = inv.status ?? 'unknown'
+    byStatus.set(status, (byStatus.get(status) ?? 0) + 1)
   }
   // Already ordered by invoice_date descending by the caller's query.
   const mostRecent = invoices[0] ?? null
@@ -215,13 +222,14 @@ function summarizeInvoices(invoices: { invoice_number: string; invoice_date: str
   return {
     invoice_count: invoices.length,
     total_amount: totalAmount,
+    total_outstanding: totalOutstanding,
     by_status: Array.from(byStatus.entries()).map(([status, count]) => ({ status, count })),
     most_recent_invoice: mostRecent
       ? {
           invoice_number: mostRecent.invoice_number,
           invoice_date: mostRecent.invoice_date,
           amount: mostRecent.amount,
-          status: mostRecent.status,
+          status: mostRecent.status ?? 'unknown',
         }
       : null,
   }
@@ -231,16 +239,18 @@ async function runDealerTool(name: string, supabase: SupabaseClient, input: Reco
   switch (name) {
     case 'get_invoices': {
       const { data, error } = await supabase
-        .from('invoices')
-        .select('invoice_number, invoice_date, amount, status')
+        .from('dealer_invoices')
+        .select('invoice_number, invoice_date, amount, outstanding, status')
         .order('invoice_date', { ascending: false })
       if (error) throw error
       return summarizeInvoices(data ?? [])
     }
     case 'get_invoice_detail': {
       let query = supabase
-        .from('invoices')
-        .select('invoice_number, fy, invoice_date, amount, status, invoice_items(description, quantity, unit_price, line_total)')
+        .from('dealer_invoices')
+        .select(
+          'invoice_number, fy, invoice_date, amount, outstanding, due_date, status, dealer_invoice_items(description, quantity, unit_price, line_total)',
+        )
       if (typeof input.status === 'string') query = query.eq('status', input.status)
       if (typeof input.invoice_number === 'string') query = query.eq('invoice_number', input.invoice_number)
       const { data, error } = await query.order('invoice_date', { ascending: false })
@@ -248,12 +258,21 @@ async function runDealerTool(name: string, supabase: SupabaseClient, input: Reco
       return data
     }
     case 'get_ledger': {
-      const { data, error } = await supabase
-        .from('dealer_ledger')
-        .select('entry_date, voucher_type, debit, credit')
-        .order('entry_date', { ascending: true })
-      if (error) throw error
-      return summarizeLedger(data ?? [])
+      // Paged: PostgREST returns at most 1,000 rows, and a busy dealer's
+      // ledger runs past that — a truncated summary would misstate the balance.
+      const entries: { entry_date: string; voucher_type: string | null; debit: number; credit: number }[] = []
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from('dealer_ledger')
+          .select('entry_date, voucher_type, debit, credit')
+          .order('entry_date', { ascending: true })
+          .order('body_id', { ascending: true })
+          .range(from, from + 999)
+        if (error) throw error
+        entries.push(...(data ?? []))
+        if (!data || data.length < 1000) break
+      }
+      return summarizeLedger(entries)
     }
     case 'get_ledger_detail': {
       let query = supabase
@@ -276,9 +295,9 @@ async function runDealerTool(name: string, supabase: SupabaseClient, input: Reco
     }
     case 'get_dealer_stock': {
       const { data, error } = await supabase
-        .from('dealer_stock')
-        .select('quantity, location, updated_at, product:products(name, sku, category)')
-        .order('updated_at', { ascending: false })
+        .from('dealer_invoice_items')
+        .select('description, sku, quantity, unit_price, line_total, invoice:dealer_invoices(invoice_number, invoice_date)')
+        .order('focus_header_id', { ascending: false })
       if (error) throw error
       return data
     }
@@ -293,7 +312,7 @@ Rules:
 - Always call the relevant tool(s) to fetch real data before answering. Never guess or estimate numbers.
 - get_invoices and get_ledger return SUMMARIES (totals, counts, breakdowns) — start with these for any general question ("what do I owe", "how many invoices"). Only call get_invoice_detail or get_ledger_detail when the dealer's question needs line-level data (a specific date range, voucher type, invoice status, or invoice number) — these can return many rows, so don't call them speculatively.
 - You can only ever see the signed-in dealer's own data — if asked about another dealer, explain that politely.
-- The ledger has no running balance and may not include every invoice — present it as a record of payments and adjustments, not a full statement of account.
+- The ledger, invoices and purchases come from the Focus UAT (test) database. It has no selling prices, invoice PDFs, or record of the dealer's own current stock and onward sales — if asked for those, say they aren't in the UAT data yet.
 - Format money as Indian Rupees, e.g. ₹8,75,000.
 - Be concise and direct. When presenting more than 2-3 records (invoices, ledger entries, stock items, etc.), format them as a GitHub-flavored Markdown table with clear column headers — not a bullet list. For a single record or a short narrative answer, plain prose is fine.
 - If a tool returns no rows, say so plainly rather than inventing an answer.`
@@ -338,16 +357,16 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], supabase: S
   }
 
   if (/(stock|inventory|units)/.test(question)) {
-    const stock = (await runDealerTool('get_dealer_stock', supabase)) as Array<{
+    const purchases = (await runDealerTool('get_dealer_stock', supabase)) as Array<{
+      description: string
       quantity: number
-      location: string | null
-      product: { name: string } | null
+      invoice: { invoice_number: string } | null
     }>
-    if (!stock.length) return `You have no stock on record yet.${MOCK_NOTICE}`
-    const lines = stock
-      .map((s) => `• ${s.product?.name ?? 'Unknown product'} — ${s.quantity} units — ${s.location ?? 'no location set'}`)
+    if (!purchases.length) return `Dingli hasn't invoiced you any machines or parts yet.${MOCK_NOTICE}`
+    const lines = purchases
+      .map((p) => `• ${p.description} — ${p.quantity} units — invoice ${p.invoice?.invoice_number ?? '—'}`)
       .join('\n')
-    return `Your current stock:\n${lines}${MOCK_NOTICE}`
+    return `Machines and parts invoiced to you by Dingli (your current holdings aren't in the UAT data):\n${lines}${MOCK_NOTICE}`
   }
 
   if (/(service|ticket|repair|request)/.test(question)) {
@@ -616,15 +635,18 @@ type CatalogueRow = {
   name: string
   category: string | null
   unit: string
-  price: number
+  /** Null for Focus-synced products: the UAT data has no selling prices. */
+  price: number | null
   description: string | null
 }
+
+const priceText = (price: number | null) => (price == null ? 'price not available' : formatINR(price))
 
 function catalogueToText(rows: CatalogueRow[]): string {
   return rows
     .map(
       (p) =>
-        `- ${p.name} | SKU ${p.sku} | ${p.category ?? 'Uncategorised'} | ${formatINR(p.price)} per ${p.unit}` +
+        `- ${p.name} | SKU ${p.sku} | ${p.category ?? 'Uncategorised'} | ${priceText(p.price)} per ${p.unit}` +
         (p.description ? ` | ${p.description}` : ''),
     )
     .join('\n')
@@ -639,7 +661,7 @@ function runProductChatMock(question: string, rows: CatalogueRow[]): string {
   if (named) {
     return (
       `**${named.name}** (${named.sku})\n\n${named.description ?? ''}\n\n` +
-      `List price ${formatINR(named.price)} per ${named.unit}, exclusive of GST and freight.${MOCK_NOTICE}`
+      `List price ${priceText(named.price)} per ${named.unit}, exclusive of GST and freight.${MOCK_NOTICE}`
     )
   }
 
@@ -654,7 +676,7 @@ function runProductChatMock(question: string, rows: CatalogueRow[]): string {
     if (matched.length) {
       const list = matched
         .slice(0, 5)
-        .map((p) => `| ${p.name} | ${formatINR(p.price)} |`)
+        .map((p) => `| ${p.name} | ${priceText(p.price)} |`)
         .join('\n')
       return `Models that cover ${wanted} m:\n\n| Model | List price |\n| --- | --- |\n${list}${MOCK_NOTICE}`
     }
@@ -666,7 +688,7 @@ function runProductChatMock(question: string, rows: CatalogueRow[]): string {
   if (hit) {
     const list = rows
       .filter((p) => p.category === hit)
-      .map((p) => `| ${p.name} | ${formatINR(p.price)} |`)
+      .map((p) => `| ${p.name} | ${priceText(p.price)} |`)
       .join('\n')
     return `**${hit}**:\n\n| Model | List price |\n| --- | --- |\n${list}${MOCK_NOTICE}`
   }
@@ -681,7 +703,7 @@ const PRODUCT_SYSTEM_PROMPT = `You are a Dingli India pre-sales assistant helpin
 
 Answer ONLY from the catalogue below — never invent a model, specification or price that is not listed. If the catalogue does not cover something (a spec that isn't listed, stock availability, lead times, discounts), say so plainly and suggest the dealer check with their Dingli India account manager.
 
-You are talking to a dealer, so be commercially useful: when someone describes a job (a working height, indoor or outdoor, a floor type, a duty cycle), recommend the specific model or models that fit and say briefly why. Working height already includes the operator's reach, so a machine should be rated at or just above the task height. Prices are list prices exclusive of GST and freight — say so whenever you quote one.
+You are talking to a dealer, so be commercially useful: when someone describes a job (a working height, indoor or outdoor, a floor type, a duty cycle), recommend the specific model or models that fit and say briefly why. Working height already includes the operator's reach, so a machine should be rated at or just above the task height. Prices are list prices exclusive of GST and freight — say so whenever you quote one. Where a price reads "price not available", the catalogue comes from the Focus UAT database, which has no selling prices yet: say the price isn't in the system and suggest the account manager.
 
 When presenting more than two models, use a GitHub-flavored Markdown table with clear column headers. Keep answers short and concrete.`
 
@@ -700,6 +722,8 @@ async function runProductChat(messages: Anthropic.MessageParam[], accessToken: s
     .from('products')
     .select('sku, name, category, unit, price, description')
     .eq('is_active', true)
+    // Machines only — thousands of spare parts would swamp the prompt.
+    .or('category.is.null,category.neq.Spare Parts')
     .order('category', { ascending: true })
     .order('price', { ascending: true })
 

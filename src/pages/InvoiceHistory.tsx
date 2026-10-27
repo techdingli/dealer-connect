@@ -11,10 +11,14 @@ import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilt
 import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { Logo } from '@/components/Logo'
 import { DealerLogo } from '@/components/DealerLogo'
+import { UatDataNotice } from '@/components/UatDataNotice'
 import { useAuth } from '@/context/AuthContext'
 import { useInvoices, useInvoiceDetail, getInvoiceSignedUrl } from '@/hooks/queries'
 import { formatCurrencyINR, formatDate, CURRENT_FY } from '@/lib/utils'
 import type { Invoice } from '@/types/database'
+
+/** Focus invoices without a bill reference have no status to show. */
+const statusLabel = (status: Invoice['status']) => status ?? 'unknown'
 
 export default function InvoiceHistory() {
   const { profile, dealer, isDemo } = useAuth()
@@ -33,7 +37,7 @@ export default function InvoiceHistory() {
       { id: 'invoice_number', label: 'Invoice #', type: 'text', accessor: (i) => i.invoice_number },
       { id: 'invoice_date', label: 'Date', type: 'date', accessor: (i) => i.invoice_date },
       { id: 'amount', label: 'Amount', type: 'number', accessor: (i) => i.amount },
-      { id: 'status', label: 'Status', type: 'select', accessor: (i) => i.status },
+      { id: 'status', label: 'Status', type: 'select', accessor: (i) => statusLabel(i.status) },
     ],
     [],
   )
@@ -46,7 +50,11 @@ export default function InvoiceHistory() {
 
   async function handleDownload(id: string, pdfPath: string | null) {
     if (!pdfPath) {
-      toast.info('No PDF is attached to this invoice yet.')
+      toast.info(
+        isDemo
+          ? 'No PDF is attached to this invoice yet.'
+          : "Invoice PDFs aren't in the Focus UAT data yet. Open View details and use Print for a copy.",
+      )
       return
     }
     setDownloadingId(id)
@@ -67,6 +75,11 @@ export default function InvoiceHistory() {
         title="Invoice History"
         description="All invoices raised against your dealership for the current financial year."
       />
+
+      <UatDataNotice className="mb-4">
+        Invoice PDFs aren't in the Focus UAT data, so Download can't fetch the original document yet —
+        open View details and use Print for a copy. Amounts, line items and payment status come from Focus.
+      </UatDataNotice>
 
       <Card className="p-4">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -102,7 +115,7 @@ export default function InvoiceHistory() {
                       <p className="font-mono text-xs text-base-400">{inv.invoice_number}</p>
                       <p className="text-xs text-base-400">{formatDate(inv.invoice_date)}</p>
                     </div>
-                    <Badge tone={toneForStatus(inv.status)}>{inv.status}</Badge>
+                    <Badge tone={toneForStatus(statusLabel(inv.status))}>{statusLabel(inv.status)}</Badge>
                   </div>
                   <p className="mt-2 font-display text-lg font-semibold text-base-50">
                     {formatCurrencyINR(inv.amount)}
@@ -153,7 +166,7 @@ export default function InvoiceHistory() {
                         {formatCurrencyINR(inv.amount)}
                       </td>
                       <td className="py-3 pr-4">
-                        <Badge tone={toneForStatus(inv.status)}>{inv.status}</Badge>
+                        <Badge tone={toneForStatus(statusLabel(inv.status))}>{statusLabel(inv.status)}</Badge>
                       </td>
                       <td className="py-3 pl-4">
                         <div className="flex justify-end gap-2">
@@ -213,7 +226,7 @@ export default function InvoiceHistory() {
             )}
 
             <div className="flex items-center justify-between print:hidden">
-              <Badge tone={toneForStatus(activeInvoice.status)}>{activeInvoice.status}</Badge>
+              <Badge tone={toneForStatus(statusLabel(activeInvoice.status))}>{statusLabel(activeInvoice.status)}</Badge>
               <div className="flex gap-2">
                 <button
                   onClick={() => window.print()}
@@ -281,9 +294,20 @@ export default function InvoiceHistory() {
                   <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-base-400 print:text-black/60">
                     Status
                   </p>
-                  <Badge tone={toneForStatus(activeInvoice.status)} className="mt-1 print:border-black/30 print:bg-transparent print:text-black">
-                    {activeInvoice.status}
+                  <Badge
+                    tone={toneForStatus(statusLabel(activeInvoice.status))}
+                    className="mt-1 print:border-black/30 print:bg-transparent print:text-black"
+                  >
+                    {statusLabel(activeInvoice.status)}
                   </Badge>
+                  {activeInvoice.due_date && (
+                    <>
+                      <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-base-400 print:text-black/60">
+                        Due date
+                      </p>
+                      <p className="mt-1 text-base-50 print:text-black">{formatDate(activeInvoice.due_date)}</p>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -330,12 +354,29 @@ export default function InvoiceHistory() {
                       </span>
                     </div>
                   )}
+                  {(() => {
+                    // Focus line items are pre-tax; the invoice total includes GST and charges.
+                    const subtotal = (activeInvoice.invoice_items ?? []).reduce((sum, item) => sum + Number(item.line_total), 0)
+                    const extra = Number(activeInvoice.amount) - subtotal
+                    return subtotal > 0 && extra > 0.5 ? (
+                      <div className="flex items-center justify-between text-sm text-base-300 print:text-black/70">
+                        <span>GST &amp; other charges</span>
+                        <span>{formatCurrencyINR(extra)}</span>
+                      </div>
+                    ) : null
+                  })()}
                   <div className="flex items-center justify-between border-t border-base-600 pt-1.5 print:border-black/20">
                     <span className="font-display font-semibold text-base-50 print:text-black">Total</span>
                     <span className="font-display text-lg font-semibold text-orange-400 print:text-black">
                       {formatCurrencyINR(activeInvoice.amount)}
                     </span>
                   </div>
+                  {activeInvoice.outstanding != null && activeInvoice.outstanding > 0 && (
+                    <div className="flex items-center justify-between text-sm font-medium text-red-500 print:text-black">
+                      <span>Balance due</span>
+                      <span>{formatCurrencyINR(activeInvoice.outstanding)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

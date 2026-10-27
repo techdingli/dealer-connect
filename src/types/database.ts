@@ -36,7 +36,8 @@ export type Product = {
   model_number?: string | null
   vehicle_type?: string | null
   unit: string
-  price: number
+  /** Null for products synced from Focus — the UAT data carries no selling prices. */
+  price: number | null
   image_url: string | null
   description: string | null
   is_active: boolean
@@ -87,7 +88,7 @@ export type StockMovement = {
     quantity: number
     unit_price: number
     total: number
-  }[]
+  }[] | null
 }
 
 export type Invoice = {
@@ -97,7 +98,11 @@ export type Invoice = {
   fy: string
   invoice_date: string
   amount: number
-  status: InvoiceStatus
+  /** Null when Focus has no bill reference to work the status out from. */
+  status: InvoiceStatus | null
+  /** Bill-wise balance still owed (Focus invoices only). */
+  outstanding?: number | null
+  due_date?: string | null
   pdf_path: string | null
   created_at: string
   invoice_items?: InvoiceItem[]
@@ -138,6 +143,36 @@ export type DealerLedgerEntry = {
   description: string | null
   debit: number
   credit: number
+  synced_at: string
+}
+
+// Invoices and their lines as synced from Focus (api/focus-sync.ts). Keyed by
+// GSTIN like dealer_ledger; the app maps them onto Invoice / InvoiceItem.
+export type DealerInvoice = {
+  focus_header_id: number
+  gstin: string
+  invoice_number: string
+  voucher_type: string | null
+  fy: string | null
+  invoice_date: string | null
+  amount: number
+  outstanding: number | null
+  due_date: string | null
+  status: InvoiceStatus | null
+  synced_at: string
+  dealer_invoice_items?: DealerInvoiceItem[]
+}
+
+export type DealerInvoiceItem = {
+  body_id: number
+  focus_header_id: number
+  gstin: string
+  focus_product_id: number | null
+  sku: string | null
+  description: string
+  quantity: number
+  unit_price: number
+  line_total: number
   synced_at: string
 }
 
@@ -200,6 +235,8 @@ export type Database = {
       invoice_items: Table<InvoiceItem, Partial<InvoiceItem>>
       ledger_entries: Table<LedgerEntry, Partial<LedgerEntry>>
       dealer_ledger: Table<DealerLedgerEntry, Partial<DealerLedgerEntry>>
+      dealer_invoices: Table<DealerInvoice, Partial<DealerInvoice>>
+      dealer_invoice_items: Table<DealerInvoiceItem, Partial<DealerInvoiceItem>>
       feedback: Table<Feedback, Partial<Feedback>>
       service_requests: Table<ServiceRequest, Partial<ServiceRequest>>
       catalogs: Table<Catalog, Partial<Catalog>>

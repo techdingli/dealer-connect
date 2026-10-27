@@ -1,7 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
-import type { Feedback, FeedbackCategory, ServicePriority } from '@/types/database'
+import type {
+  DealerInvoice,
+  DealerStock,
+  Feedback,
+  FeedbackCategory,
+  Invoice,
+  Product,
+  ServicePriority,
+} from '@/types/database'
 import { DEMO_MODE } from '@/config/demo'
 import { DEMO_CATALOGS, DEMO_DINGLI_STOCK, DEMO_MACHINES, DEMO_PRODUCTS } from '@/lib/demo/catalog'
 import { addDemoFeedback, addDemoServiceRequest, getDemoDataset } from '@/lib/demo/dataset'
@@ -10,6 +18,54 @@ import { addDemoFeedback, addDemoServiceRequest, getDemoDataset } from '@/lib/de
 // generated data and never touches Supabase; otherwise it runs the real query.
 // Flipping VITE_DEMO_MODE=false restores the live paths wholesale — see
 // @/config/demo.
+
+/**
+ * Supabase (PostgREST) caps a response at 1,000 rows. The Focus-synced tables
+ * (ledger, catalogue, stock) can run past that, so read them a page at a time.
+ * The query must have a stable order for the pages not to overlap.
+ */
+const PAGE_SIZE = 1000
+
+async function fetchAllPages<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+): Promise<T[]> {
+  const rows: T[] = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1)
+    if (error) throw error
+    rows.push(...(data ?? []))
+    if (!data || data.length < PAGE_SIZE) return rows
+  }
+}
+
+/** A Focus invoice in the shape the invoice pages already render. */
+function toInvoice(row: DealerInvoice, dealerId: string): Invoice {
+  const id = String(row.focus_header_id)
+  return {
+    id,
+    dealer_id: dealerId,
+    invoice_number: row.invoice_number,
+    fy: row.fy ?? '',
+    invoice_date: row.invoice_date ?? row.synced_at,
+    amount: Number(row.amount),
+    status: row.status,
+    outstanding: row.outstanding == null ? null : Number(row.outstanding),
+    due_date: row.due_date,
+    // Focus UAT holds no invoice PDFs.
+    pdf_path: null,
+    created_at: row.synced_at,
+    invoice_items: (row.dealer_invoice_items ?? []).map((item) => ({
+      id: String(item.body_id),
+      invoice_id: id,
+      product_id: null,
+      description: item.description,
+      quantity: Number(item.quantity),
+      unit_price: Number(item.unit_price),
+      line_total: Number(item.line_total),
+      created_at: item.synced_at,
+    })),
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Reference data (shared across all dealers)
@@ -21,14 +77,19 @@ export function useProducts() {
     queryFn: async () => {
       if (DEMO_MODE) return DEMO_PRODUCTS
 
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .eq('is_active', true)
-        .order('category', { ascending: true })
-        .order('name', { ascending: true })
-      if (error) throw error
-      return data
+      // Machines only: the ~9k spare parts synced from Focus are browsed on
+      // Dingli Stock, and the Price List has never listed spares.
+      return fetchAllPages<Product>((from, to) =>
+        supabase
+          .from('products')
+          .select('*')
+          .eq('is_active', true)
+          .or('category.is.null,category.neq.Spare Parts')
+          .order('category', { ascending: true })
+          .order('name', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to),
+      )
     },
   })
 }
@@ -39,12 +100,14 @@ export function useDingliStock() {
     queryFn: async () => {
       if (DEMO_MODE) return DEMO_DINGLI_STOCK
 
-      const { data, error } = await supabase
-        .from('dingli_stock')
-        .select('*, product:products(*)')
-        .order('updated_at', { ascending: false })
-      if (error) throw error
-      return data
+      return fetchAllPages((from, to) =>
+        supabase
+          .from('dingli_stock')
+          .select('*, product:products(*)')
+          .order('updated_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to),
+      )
     },
   })
 }
@@ -110,13 +173,59 @@ export function useDealerStock() {
     queryFn: async () => {
       if (DEMO_MODE) return getDemoDataset(user!.id).dealerStock
 
-      const { data, error } = await supabase
-        .from('dealer_stock')
-        .select('*, product:products(*)')
-        .eq('dealer_id', user!.id)
-        .order('updated_at', { ascending: false })
-      if (error) throw error
-      return data
+      // Live data is Focus, which only knows what Dingli invoiced to this
+      // dealer — not what they hold now, where, or what they've sold. So each
+      // row is one invoiced machine/part line (quantity = quantity purchased),
+      // and the page explains the rest isn't in the UAT data.
+      const invoices = await fetchAllPages<DealerInvoice>((from, to) =>
+        supabase
+          .from('dealer_invoices')
+          .select('*, dealer_invoice_items(*)')
+          .order('invoice_date', { ascending: false })
+          .order('focus_header_id', { ascending: true })
+          .range(from, to),
+      )
+      const lines = invoices.flatMap((inv) =>
+        (inv.dealer_invoice_items ?? []).map((item) => ({ inv, item })),
+      )
+      const productIds = [...new Set(lines.map((l) => l.item.focus_product_id).filter((id): id is number => id != null))]
+      const products = new Map<number, Product>()
+      for (let i = 0; i < productIds.length; i += 200) {
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .in('focus_product_id', productIds.slice(i, i + 200))
+        if (error) throw error
+        for (const p of data ?? []) products.set((p as Product & { focus_product_id: number }).focus_product_id, p)
+      }
+
+      // Service charges and other non-catalogue lines aren't stock.
+      return lines
+        .filter((l) => l.item.focus_product_id != null && products.has(l.item.focus_product_id))
+        .map<DealerStock>(({ inv, item }) => {
+          const product = products.get(item.focus_product_id!)!
+          return {
+            id: String(item.body_id),
+            dealer_id: user!.id,
+            product_id: product.id,
+            quantity: Number(item.quantity),
+            location: null,
+            warehouse: null,
+            updated_at: inv.invoice_date ?? inv.synced_at,
+            product,
+            movement: {
+              purchase: {
+                invoice_number: inv.invoice_number,
+                date: inv.invoice_date ?? inv.synced_at,
+                quantity: Number(item.quantity),
+                unit_cost: Number(item.unit_price),
+                total_cost: Number(item.line_total),
+                supplier: 'Dingli India',
+              },
+              sales: null,
+            },
+          }
+        })
     },
   })
 }
@@ -129,13 +238,16 @@ export function useInvoices() {
     queryFn: async () => {
       if (DEMO_MODE) return getDemoDataset(user!.id).invoices
 
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('*, invoice_items(*)')
-        .eq('dealer_id', user!.id)
-        .order('invoice_date', { ascending: false })
-      if (error) throw error
-      return data
+      // Focus invoices, scoped by RLS to this profile's GSTIN.
+      const rows = await fetchAllPages<DealerInvoice>((from, to) =>
+        supabase
+          .from('dealer_invoices')
+          .select('*, dealer_invoice_items(*)')
+          .order('invoice_date', { ascending: false })
+          .order('focus_header_id', { ascending: true })
+          .range(from, to),
+      )
+      return rows.map((row) => toInvoice(row, user!.id))
     },
   })
 }
@@ -153,13 +265,12 @@ export function useInvoiceDetail(invoiceId: string | null) {
       }
 
       const { data, error } = await supabase
-        .from('invoices')
-        .select('*, invoice_items(*)')
-        .eq('id', invoiceId!)
-        .eq('dealer_id', user!.id)
+        .from('dealer_invoices')
+        .select('*, dealer_invoice_items(*)')
+        .eq('focus_header_id', Number(invoiceId))
         .single()
       if (error) throw error
-      return data
+      return toInvoice(data as DealerInvoice, user!.id)
     },
   })
 }
@@ -185,12 +296,14 @@ export function useLedger() {
 
       // Scoped by RLS to the GSTIN on this profile - there is no dealer_id to
       // filter on, because the entries come from Focus, not from a signup.
-      const { data, error } = await supabase
-        .from('dealer_ledger')
-        .select('*')
-        .order('entry_date', { ascending: true })
-      if (error) throw error
-      return data
+      return fetchAllPages((from, to) =>
+        supabase
+          .from('dealer_ledger')
+          .select('*')
+          .order('entry_date', { ascending: true })
+          .order('body_id', { ascending: true })
+          .range(from, to),
+      )
     },
   })
 }

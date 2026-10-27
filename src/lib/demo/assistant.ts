@@ -133,7 +133,7 @@ const TABLE_HEAD = `| Model | Working height | Use | Drive | List price |\n| ---
 function productLine(product: (typeof DEMO_PRODUCTS)[number]): string {
   const spec = specOf(product.sku)
   const height = spec?.workingHeight ? `${spec.workingHeight} m` : '—'
-  return `| ${modelNumberOf(product)} | ${height} | ${spec?.terrain ?? '—'} | ${vehicleTypeOf(product)} | ${formatCurrencyINR(product.price)} |`
+  return `| ${modelNumberOf(product)} | ${height} | ${spec?.terrain ?? '—'} | ${vehicleTypeOf(product)} | ${formatCurrencyINR(product.price ?? 0)} |`
 }
 
 function describe(product: (typeof DEMO_PRODUCTS)[number]): string {
@@ -144,7 +144,7 @@ function describe(product: (typeof DEMO_PRODUCTS)[number]): string {
     `- Designed for: ${spec?.terrain ?? 'n/a'}\n` +
     `- Drive: ${vehicleTypeOf(product)}\n` +
     `- Category: ${product.category}\n` +
-    `- List price: ${formatCurrencyINR(product.price)}\n\n` +
+    `- List price: ${formatCurrencyINR(product.price ?? 0)}\n\n` +
     product.description
   )
 }
@@ -225,7 +225,7 @@ export function answerProductQuestion(question: string): string {
     if (category === 'Spare Parts') {
       return (
         `**Spare parts and consumables:**\n\n| Part | Part no. | Price |\n| --- | --- | --- |\n` +
-        rows.map((p) => `| ${p.name} | ${modelNumberOf(p)} | ${formatCurrencyINR(p.price)} |`).join('\n')
+        rows.map((p) => `| ${p.name} | ${modelNumberOf(p)} | ${formatCurrencyINR(p.price ?? 0)} |`).join('\n')
       )
     }
     return `**${category}** in the current range:\n\n${TABLE_HEAD}${rows.map(productLine).join('\n')}`
@@ -249,12 +249,12 @@ export function answerProductQuestion(question: string): string {
   }
 
   if (matches(q, 'cheap', 'lowest price', 'budget', 'entry', 'affordable')) {
-    const rows = [...MACHINES].sort((a, b) => a.price - b.price).slice(0, 4)
+    const rows = [...MACHINES].sort((a, b) => (a.price ?? 0) - (b.price ?? 0)).slice(0, 4)
     return `**Most affordable machines** in the range:\n\n${TABLE_HEAD}${rows.map(productLine).join('\n')}`
   }
 
   if (matches(q, 'price', 'cost', 'rate', 'how much')) {
-    const rows = [...MACHINES].sort((a, b) => a.price - b.price)
+    const rows = [...MACHINES].sort((a, b) => (a.price ?? 0) - (b.price ?? 0))
     return (
       `List prices across the range, exclusive of GST and freight:\n\n${TABLE_HEAD}${rows.map(productLine).join('\n')}`
     )
