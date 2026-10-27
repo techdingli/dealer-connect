@@ -41,4 +41,5 @@ export function financialYearOf(dateStr: string) {
   return `FY ${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`
 }
 
-export const CURRENT_FY = 'FY 2025-26'
+/** The financial year today falls in — real Focus data is dated, so this can't be a constant. */
+export const CURRENT_FY = financialYearOf(new Date().toISOString())

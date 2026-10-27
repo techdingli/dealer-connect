@@ -15,6 +15,8 @@ import { FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
 import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useServiceRequests, useSubmitServiceRequest } from '@/hooks/queries'
 import { formatDate } from '@/lib/utils'
+import { UatDataNotice } from '@/components/UatDataNotice'
+import { DEMO_MODE } from '@/config/demo'
 import type { ServiceRequest } from '@/types/database'
 
 const schema = z.object({
@@ -72,6 +74,13 @@ export default function ServiceRequests() {
         title="Service Requests"
         description="Raise a service ticket for any Dingli machine and track its progress here."
       />
+
+      {DEMO_MODE && (
+        <UatDataNotice className="mb-4">
+          Focus UAT holds no service ticket history, and this preview has no ticket backend —
+          requests you raise here are kept for this session only.
+        </UatDataNotice>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <Card className="lg:col-span-2">

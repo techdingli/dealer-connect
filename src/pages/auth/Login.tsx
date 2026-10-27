@@ -30,13 +30,17 @@ function useLoginRedirect() {
 }
 
 /**
- * Demo sign-in: pick a dealership, no credentials. Deliberately not a real
- * auth flow — demo mode never provisions accounts or talks to Supabase Auth.
+ * UAT sign-in: pick a dealership and enter the one shared UAT password, which
+ * /api/uat-data checks. Deliberately not per-dealer auth — demo mode never
+ * provisions accounts or talks to Supabase Auth.
  */
 function DemoSignIn() {
   const { signInAsDealer } = useAuth()
   const redirect = useLoginRedirect()
   const [dealerId, setDealerId] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
 
   // Alphabetical, so a dealer can find themselves in a 17-long list.
   const options = useMemo(
@@ -45,10 +49,16 @@ function DemoSignIn() {
   )
   const selected = getDealer(dealerId)
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!selected) return
-    signInAsDealer(selected.id)
+    if (!selected || !password) return
+    setSubmitting(true)
+    const result = await signInAsDealer(selected.id, password)
+    setSubmitting(false)
+    if (result.error) {
+      setError(result.error)
+      return
+    }
     toast.success(`Signed in as ${selected.shortName}`)
     redirect()
   }
@@ -91,7 +101,26 @@ function DemoSignIn() {
         </div>
       )}
 
-      <Button type="submit" className="w-full" disabled={!selected}>
+      <div>
+        <Label htmlFor="uat-password">Portal password</Label>
+        <div className="relative">
+          <Lock className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-base-400" />
+          <Input
+            id="uat-password"
+            type="password"
+            placeholder="Shared UAT password"
+            className="pl-10"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value)
+              setError(null)
+            }}
+          />
+        </div>
+        <FieldError>{error ?? undefined}</FieldError>
+      </div>
+
+      <Button type="submit" className="w-full" disabled={!selected || !password} loading={submitting}>
         Enter portal
         <ArrowRight className="size-4" />
       </Button>
@@ -157,15 +186,18 @@ function CredentialsSignIn() {
 export default function Login() {
   return (
     <AuthLayout
-      title={DEMO_MODE ? 'Sign in to the demo portal' : 'Sign in to your account'}
+      title={DEMO_MODE ? 'Sign in to the UAT portal' : 'Sign in to your account'}
       subtitle={
         DEMO_MODE
-          ? 'Pick your dealership to explore the portal — no password needed.'
+          ? 'Pick your dealership and enter the shared portal password.'
           : 'Access your dealer dashboard, stock, invoices, and more.'
       }
       footer={
         DEMO_MODE ? (
-          <>This is a preview build. Logins and data become real once the portal goes live.</>
+          <>
+            Figures come from Dingli&apos;s Focus UAT system. Personal logins and production data
+            arrive when the portal goes live.
+          </>
         ) : (
           <>
             Don&apos;t have a dealer account?{' '}

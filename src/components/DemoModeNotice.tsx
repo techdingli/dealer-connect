@@ -1,24 +1,25 @@
-import { FlaskConical } from 'lucide-react'
+import { DatabaseZap } from 'lucide-react'
 import { DEMO_MODE } from '@/config/demo'
 import { cn } from '@/lib/utils'
 
-/* Both components render nothing when demo mode is off, so callers can drop
+/* Demo mode shows Dingli's Focus UAT data (see @/config/demo), so these label
+ * it as such. Both render nothing when demo mode is off, so callers can drop
  * them in unconditionally and they simply disappear on the live build. */
 
-/** Compact "DEMO MODE" pill — for headers and chrome. */
+/** Compact "UAT DATA" pill — for headers and chrome. */
 export function DemoModeBadge({ className }: { className?: string }) {
   if (!DEMO_MODE) return null
 
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-0.5',
-        'text-[10px] font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-300',
+        'inline-flex items-center gap-1.5 rounded-full border border-sky-500/40 bg-sky-500/15 px-2.5 py-0.5',
+        'text-[10px] font-semibold uppercase tracking-widest text-sky-600 dark:text-sky-300',
         className,
       )}
     >
-      <FlaskConical className="size-3" />
-      Demo Mode
+      <DatabaseZap className="size-3" />
+      UAT Data
     </span>
   )
 }
@@ -30,17 +31,18 @@ export function DemoModeBanner({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        'flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3',
+        'flex items-start gap-3 rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3',
         className,
       )}
     >
-      <FlaskConical className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-300" />
+      <DatabaseZap className="mt-0.5 size-4 shrink-0 text-sky-600 dark:text-sky-300" />
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-amber-700 dark:text-amber-200">Demo Mode</p>
-        <p className="mt-0.5 text-xs leading-relaxed text-amber-700/90 dark:text-amber-200/80">
-          Every figure in this portal — stock, invoices, ledger balances and service tickets — is
-          randomly generated sample data, not your real account. Only your dealership name and logo
-          are real.
+        <p className="text-sm font-semibold text-sky-700 dark:text-sky-200">Focus UAT data</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-sky-700/90 dark:text-sky-200/80">
+          The ledger, invoices, purchases, product catalogue and Dingli stock in this portal come
+          from Dingli&apos;s Focus UAT (test) system, synced daily — not random sample data. Details
+          the UAT system doesn&apos;t hold are marked “Not in the UAT data yet”. Production figures
+          replace these when the portal goes live.
         </p>
       </div>
     </div>

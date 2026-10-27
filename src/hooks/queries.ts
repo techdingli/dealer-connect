@@ -1,23 +1,34 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import type {
+  Catalog,
   DealerInvoice,
+  DealerLedgerEntry,
   DealerStock,
+  DingliStock,
   Feedback,
   FeedbackCategory,
   Invoice,
+  Machine,
   Product,
   ServicePriority,
 } from '@/types/database'
 import { DEMO_MODE } from '@/config/demo'
-import { DEMO_CATALOGS, DEMO_DINGLI_STOCK, DEMO_MACHINES, DEMO_PRODUCTS } from '@/lib/demo/catalog'
-import { addDemoFeedback, addDemoServiceRequest, getDemoDataset } from '@/lib/demo/dataset'
+import {
+  addSessionFeedback,
+  addSessionServiceRequest,
+  readUatAccess,
+  sessionFeedback,
+  sessionServiceRequests,
+  uatFetch,
+} from '@/lib/uat'
 
-// Every hook below has the same shape: when DEMO_MODE is on it returns
-// generated data and never touches Supabase; otherwise it runs the real query.
-// Flipping VITE_DEMO_MODE=false restores the live paths wholesale — see
-// @/config/demo.
+// Every hook below reads one of two sources. Demo mode shows Dingli's Focus
+// UAT data, synced into Supabase and read through /api/uat-data with the
+// shared UAT password. Live mode reads the same tables directly with the
+// dealer's own Supabase session, scoped by RLS. Flipping VITE_DEMO_MODE=false
+// switches every hook to the live path — see @/config/demo.
 
 /**
  * Supabase (PostgREST) caps a response at 1,000 rows. The Focus-synced tables
@@ -67,6 +78,67 @@ function toInvoice(row: DealerInvoice, dealerId: string): Invoice {
   }
 }
 
+/**
+ * My Stock from Focus. Focus only knows what Dingli invoiced to this dealer —
+ * not what they hold now, where, or what they've sold — so each row is one
+ * invoiced machine/part line (quantity = quantity purchased), and the page
+ * explains the rest isn't in the UAT data. Service charges and other
+ * non-catalogue lines aren't stock, so lines without a catalogue product drop.
+ */
+function toPurchases(invoices: DealerInvoice[], products: Product[], dealerId: string): DealerStock[] {
+  const byFocusId = new Map(
+    products.map((p) => [(p as Product & { focus_product_id: number | null }).focus_product_id, p] as const),
+  )
+  return invoices.flatMap((inv) =>
+    (inv.dealer_invoice_items ?? []).flatMap<DealerStock>((item) => {
+      const product = item.focus_product_id == null ? undefined : byFocusId.get(item.focus_product_id)
+      if (!product) return []
+      const date = inv.invoice_date ?? inv.synced_at
+      return [
+        {
+          id: String(item.body_id),
+          dealer_id: dealerId,
+          product_id: product.id,
+          quantity: Number(item.quantity),
+          location: null,
+          warehouse: null,
+          updated_at: date,
+          product,
+          movement: {
+            purchase: {
+              invoice_number: inv.invoice_number,
+              date,
+              quantity: Number(item.quantity),
+              unit_cost: Number(item.unit_price),
+              total_cost: Number(item.line_total),
+              supplier: 'Dingli India',
+            },
+            sales: null,
+          },
+        },
+      ]
+    }),
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Demo (UAT) mode: one request per dealer, shared by the per-dealer hooks
+// ---------------------------------------------------------------------------
+
+type UatDealerData = { ledger: DealerLedgerEntry[]; invoices: DealerInvoice[]; products: Product[] }
+
+/** The signed-in dealer's UAT data, fetched once and shared through the query cache. */
+function uatDealerData(queryClient: QueryClient): Promise<UatDealerData> {
+  const gstin = readUatAccess()?.gstin ?? null
+  return queryClient.fetchQuery({
+    queryKey: ['uat-dealer', gstin],
+    queryFn: async () =>
+      // A dealership missing from the Focus UAT dealer list has nothing to show.
+      gstin ? uatFetch<UatDealerData>('dealer', { gstin }) : { ledger: [], invoices: [], products: [] },
+    staleTime: 60_000,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Reference data (shared across all dealers)
 // ---------------------------------------------------------------------------
@@ -75,7 +147,7 @@ export function useProducts() {
   return useQuery({
     queryKey: ['products', DEMO_MODE],
     queryFn: async () => {
-      if (DEMO_MODE) return DEMO_PRODUCTS
+      if (DEMO_MODE) return (await uatFetch<{ products: Product[] }>('catalog')).products
 
       // Machines only: the ~9k spare parts synced from Focus are browsed on
       // Dingli Stock, and the Price List has never listed spares.
@@ -98,9 +170,9 @@ export function useDingliStock() {
   return useQuery({
     queryKey: ['dingli_stock', DEMO_MODE],
     queryFn: async () => {
-      if (DEMO_MODE) return DEMO_DINGLI_STOCK
+      if (DEMO_MODE) return (await uatFetch<{ stock: DingliStock[] }>('dingli-stock')).stock
 
-      return fetchAllPages((from, to) =>
+      return fetchAllPages<DingliStock>((from, to) =>
         supabase
           .from('dingli_stock')
           .select('*, product:products(*)')
@@ -112,17 +184,13 @@ export function useDingliStock() {
   })
 }
 
+type MachineManual = Pick<Machine, 'model_name' | 'category' | 'manual_text'>
+
 export function useMachines() {
   return useQuery({
     queryKey: ['machines', DEMO_MODE],
     queryFn: async () => {
-      if (DEMO_MODE) {
-        return DEMO_MACHINES.map((m) => ({
-          model_name: m.model_name,
-          category: m.category,
-          manual_text: m.manual_text,
-        }))
-      }
+      if (DEMO_MODE) return (await uatFetch<{ machines: MachineManual[] }>('machines')).machines
 
       const { data, error } = await supabase
         .from('machines')
@@ -146,7 +214,7 @@ export function useCatalogs() {
   return useQuery({
     queryKey: ['catalogs', DEMO_MODE],
     queryFn: async () => {
-      if (DEMO_MODE) return DEMO_CATALOGS
+      if (DEMO_MODE) return (await uatFetch<{ catalogs: Catalog[] }>('catalogs')).catalogs
 
       const { data, error } = await supabase.from('catalogs').select('*').order('created_at', { ascending: false })
       if (error) throw error
@@ -155,9 +223,8 @@ export function useCatalogs() {
   })
 }
 
-/** Null in demo mode — there are no files behind the generated catalog rows. */
-export function getCatalogDownloadUrl(filePath: string): string | null {
-  if (DEMO_MODE) return null
+/** The catalogs bucket is public, so this works in both modes. */
+export function getCatalogDownloadUrl(filePath: string): string {
   return supabase.storage.from('catalogs').getPublicUrl(filePath).data.publicUrl
 }
 
@@ -167,16 +234,16 @@ export function getCatalogDownloadUrl(filePath: string): string | null {
 
 export function useDealerStock() {
   const { user } = useAuth()
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: ['dealer_stock', user?.id],
     enabled: !!user,
     queryFn: async () => {
-      if (DEMO_MODE) return getDemoDataset(user!.id).dealerStock
+      if (DEMO_MODE) {
+        const data = await uatDealerData(queryClient)
+        return toPurchases(data.invoices, data.products, user!.id)
+      }
 
-      // Live data is Focus, which only knows what Dingli invoiced to this
-      // dealer — not what they hold now, where, or what they've sold. So each
-      // row is one invoiced machine/part line (quantity = quantity purchased),
-      // and the page explains the rest isn't in the UAT data.
       const invoices = await fetchAllPages<DealerInvoice>((from, to) =>
         supabase
           .from('dealer_invoices')
@@ -185,58 +252,40 @@ export function useDealerStock() {
           .order('focus_header_id', { ascending: true })
           .range(from, to),
       )
-      const lines = invoices.flatMap((inv) =>
-        (inv.dealer_invoice_items ?? []).map((item) => ({ inv, item })),
-      )
-      const productIds = [...new Set(lines.map((l) => l.item.focus_product_id).filter((id): id is number => id != null))]
-      const products = new Map<number, Product>()
+      const productIds = [
+        ...new Set(
+          invoices.flatMap((inv) =>
+            (inv.dealer_invoice_items ?? [])
+              .map((item) => item.focus_product_id)
+              .filter((id): id is number => id != null),
+          ),
+        ),
+      ]
+      const products: Product[] = []
       for (let i = 0; i < productIds.length; i += 200) {
         const { data, error } = await supabase
           .from('products')
           .select('*')
           .in('focus_product_id', productIds.slice(i, i + 200))
         if (error) throw error
-        for (const p of data ?? []) products.set((p as Product & { focus_product_id: number }).focus_product_id, p)
+        products.push(...(data ?? []))
       }
-
-      // Service charges and other non-catalogue lines aren't stock.
-      return lines
-        .filter((l) => l.item.focus_product_id != null && products.has(l.item.focus_product_id))
-        .map<DealerStock>(({ inv, item }) => {
-          const product = products.get(item.focus_product_id!)!
-          return {
-            id: String(item.body_id),
-            dealer_id: user!.id,
-            product_id: product.id,
-            quantity: Number(item.quantity),
-            location: null,
-            warehouse: null,
-            updated_at: inv.invoice_date ?? inv.synced_at,
-            product,
-            movement: {
-              purchase: {
-                invoice_number: inv.invoice_number,
-                date: inv.invoice_date ?? inv.synced_at,
-                quantity: Number(item.quantity),
-                unit_cost: Number(item.unit_price),
-                total_cost: Number(item.line_total),
-                supplier: 'Dingli India',
-              },
-              sales: null,
-            },
-          }
-        })
+      return toPurchases(invoices, products, user!.id)
     },
   })
 }
 
 export function useInvoices() {
   const { user } = useAuth()
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: ['invoices', user?.id],
     enabled: !!user,
     queryFn: async () => {
-      if (DEMO_MODE) return getDemoDataset(user!.id).invoices
+      if (DEMO_MODE) {
+        const data = await uatDealerData(queryClient)
+        return data.invoices.map((row) => toInvoice(row, user!.id))
+      }
 
       // Focus invoices, scoped by RLS to this profile's GSTIN.
       const rows = await fetchAllPages<DealerInvoice>((from, to) =>
@@ -254,14 +303,16 @@ export function useInvoices() {
 
 export function useInvoiceDetail(invoiceId: string | null) {
   const { user } = useAuth()
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: ['invoice', invoiceId],
     enabled: !!user && !!invoiceId,
     queryFn: async () => {
       if (DEMO_MODE) {
-        const invoice = getDemoDataset(user!.id).invoices.find((i) => i.id === invoiceId)
-        if (!invoice) throw new Error('Invoice not found')
-        return invoice
+        const data = await uatDealerData(queryClient)
+        const row = data.invoices.find((i) => String(i.focus_header_id) === invoiceId)
+        if (!row) throw new Error('Invoice not found')
+        return toInvoice(row, user!.id)
       }
 
       const { data, error } = await supabase
@@ -275,12 +326,7 @@ export function useInvoiceDetail(invoiceId: string | null) {
   })
 }
 
-/** The one watermarked sample PDF every demo invoice downloads. */
-export const SAMPLE_INVOICE_URL = `${import.meta.env.BASE_URL}sample-invoice.pdf`
-
 export async function getInvoiceSignedUrl(pdfPath: string) {
-  if (DEMO_MODE) return SAMPLE_INVOICE_URL
-
   const { data, error } = await supabase.storage.from('invoices').createSignedUrl(pdfPath, 60 * 5)
   if (error) throw error
   return data.signedUrl
@@ -288,15 +334,16 @@ export async function getInvoiceSignedUrl(pdfPath: string) {
 
 export function useLedger() {
   const { user } = useAuth()
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: ['dealer_ledger', user?.id],
     enabled: !!user,
     queryFn: async () => {
-      if (DEMO_MODE) return getDemoDataset(user!.id).ledger
+      if (DEMO_MODE) return (await uatDealerData(queryClient)).ledger
 
       // Scoped by RLS to the GSTIN on this profile - there is no dealer_id to
       // filter on, because the entries come from Focus, not from a signup.
-      return fetchAllPages((from, to) =>
+      return fetchAllPages<DealerLedgerEntry>((from, to) =>
         supabase
           .from('dealer_ledger')
           .select('*')
@@ -314,8 +361,8 @@ export function useFeedbackList() {
     queryKey: ['feedback', user?.id],
     enabled: !!user,
     queryFn: async () => {
-      // Copied so react-query sees a new reference after a demo submission.
-      if (DEMO_MODE) return [...getDemoDataset(user!.id).feedback]
+      // Copied so react-query sees a new reference after a session submission.
+      if (DEMO_MODE) return [...sessionFeedback(user!.id)]
 
       const { data, error } = await supabase
         .from('feedback')
@@ -338,7 +385,7 @@ export function useSubmitFeedback() {
       // Demo submissions live in memory for the session only — they're gone on
       // reload, which is the honest behaviour when there's no backend.
       if (DEMO_MODE) {
-        addDemoFeedback(user.id, input)
+        addSessionFeedback(user.id, input)
         return
       }
 
@@ -362,7 +409,7 @@ export function useServiceRequests() {
     queryKey: ['service_requests', user?.id],
     enabled: !!user,
     queryFn: async () => {
-      if (DEMO_MODE) return [...getDemoDataset(user!.id).serviceRequests]
+      if (DEMO_MODE) return [...sessionServiceRequests(user!.id)]
 
       const { data, error } = await supabase
         .from('service_requests')
@@ -388,7 +435,7 @@ export function useSubmitServiceRequest() {
       if (!user) throw new Error('Not signed in')
 
       if (DEMO_MODE) {
-        addDemoServiceRequest(user.id, {
+        addSessionServiceRequest(user.id, {
           machine_model: input.machineModel,
           serial_number: input.serialNumber || null,
           issue_description: input.issueDescription,

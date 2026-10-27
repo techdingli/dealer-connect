@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { toast } from 'sonner'
 import { BookMarked, Download, FileText } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card } from '@/components/ui/Card'
@@ -23,24 +22,8 @@ function formatFileSize(bytes: number | null) {
   return `${mb.toFixed(1)} MB`
 }
 
-/* In demo mode the catalog rows are generated and there are no files behind
- * them, so there is nothing to link to — say so rather than handing over a
- * dead link. */
 function CatalogDownload({ filePath }: { filePath: string }) {
   const url = getCatalogDownloadUrl(filePath)
-
-  if (!url) {
-    return (
-      <button
-        type="button"
-        onClick={() => toast.info('Catalog downloads are switched off in demo mode.')}
-        className={downloadClasses}
-      >
-        <Download className="size-4" />
-        Download
-      </button>
-    )
-  }
 
   return (
     <a href={url} target="_blank" rel="noopener noreferrer" className={downloadClasses}>

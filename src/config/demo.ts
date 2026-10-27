@@ -1,21 +1,18 @@
 /**
- * Demo mode — the single switch that decides whether this portal talks to
- * Supabase at all.
+ * Demo mode — the switch between the UAT preview and the live portal.
  *
- * When ON (the default):
- *   - Login is a dealer dropdown, not email/password. No Supabase Auth, no
- *     passwords, no accounts to provision.
- *   - Every page renders generated data seeded from the selected dealer's id,
- *     so nothing real is ever fetched or displayed.
- *   - The assistant answers from that same generated data instead of calling
- *     /api/chat (which would otherwise hit Supabase with a real access token).
+ * When ON (the default), the portal shows Dingli's Focus UAT data:
+ *   - Login is a dealer dropdown plus one shared password, checked by
+ *     /api/uat-data. No Supabase Auth, no per-dealer accounts.
+ *   - Ledger, invoices, purchases, the product catalogue and Dingli stock come
+ *     from Focus UAT, synced into Supabase daily by /api/focus-sync and read
+ *     through /api/uat-data. Nothing is generated or randomised.
+ *   - The assistant answers from the same UAT data through /api/chat.
+ *   - Whatever Focus UAT doesn't hold (selling prices, invoice PDFs, a dealer's
+ *     own stock and sales, warehouse cities) is marked as missing, not faked.
  *
- * To go live: set VITE_DEMO_MODE=false in the environment (Vercel project
- * settings, or .env.local for dev) and redeploy. Nothing else needs changing —
- * every demo branch in the codebase keys off this one constant, so the real
- * Supabase paths come straight back.
+ * When production Focus data is connected: point the sync at production, set
+ * VITE_DEMO_MODE=false and redeploy. Dealers then sign in with their own
+ * Supabase accounts and RLS scopes their data by profile GSTIN.
  */
 export const DEMO_MODE = (import.meta.env.VITE_DEMO_MODE as string | undefined) !== 'false'
-
-/** localStorage key holding the dealer id picked on the demo login screen. */
-export const DEMO_DEALER_STORAGE_KEY = 'dingli-demo-dealer'

@@ -11,7 +11,6 @@ import { Modal } from '@/components/ui/Modal'
 import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
 import { LastUpdated } from '@/components/ui/LastUpdated'
 import { NotInUat, UatDataNotice } from '@/components/UatDataNotice'
-import { DEMO_MODE } from '@/config/demo'
 import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useDealerStock } from '@/hooks/queries'
 import { formatCurrencyINR, formatDate } from '@/lib/utils'
@@ -179,11 +178,7 @@ export default function DealerStock() {
       <PageHeader
         eyebrow="Your Dealership"
         title="My Stock"
-        description={
-          DEMO_MODE
-            ? "Machines and units currently held at your dealership location(s). Select a line to see what it cost and what's sold."
-            : 'Machines and parts Dingli India has invoiced to you, as synced from Focus. Select a line to see the purchase.'
-        }
+        description="Machines and parts Dingli India has invoiced to you, as synced from Focus UAT. Select a line to see the purchase."
         action={<LastUpdated value={lastUpdated} />}
       />
 

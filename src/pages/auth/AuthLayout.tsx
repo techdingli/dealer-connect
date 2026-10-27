@@ -80,7 +80,7 @@ export function AuthLayout({
         >
           <ShieldCheck className="size-4 text-emerald-400" />
           {DEMO_MODE
-            ? 'Preview build · Sample data only — nothing here is a live account'
+            ? 'UAT preview · Figures from Dingli’s Focus UAT system, not production'
             : 'Secured by Supabase Auth · Row-level data isolation per dealer'}
         </motion.div>
       </div>

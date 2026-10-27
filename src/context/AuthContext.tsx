@@ -2,16 +2,16 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import type { Profile } from '@/types/database'
-import { DEMO_MODE, DEMO_DEALER_STORAGE_KEY } from '@/config/demo'
+import { DEMO_MODE } from '@/config/demo'
 import { findDealerByName, getDealer, type Dealer } from '@/config/dealers'
-import { getDemoDataset } from '@/lib/demo/dataset'
+import { clearUatAccess, readUatAccess, uatFetch, UatAuthError, writeUatAccess } from '@/lib/uat'
 
 interface AuthContextValue {
   session: Session | null
   user: User | null
   profile: Profile | null
   loading: boolean
-  /** True when the portal is running on generated data — see @/config/demo. */
+  /** True when the portal is showing Focus UAT data — see @/config/demo. */
   isDemo: boolean
   /**
    * The signed-in dealer's branding — city and logo. In demo mode this is the
@@ -19,8 +19,8 @@ interface AuthContextValue {
    * Supabase profile by name, and is null if no bundled logo matches.
    */
   dealer: Dealer | null
-  /** Demo-mode sign-in: pick a dealer, no credentials. */
-  signInAsDealer: (dealerId: string) => void
+  /** Demo (UAT) sign-in: pick a dealer and enter the shared UAT password. */
+  signInAsDealer: (dealerId: string, password: string) => Promise<{ error: string | null }>
   signInWithPassword: (email: string, password: string) => Promise<{ error: string | null }>
   signUp: (params: {
     email: string
@@ -35,12 +35,13 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 const DEMO_ONLY_ERROR =
-  'The portal is running in demo mode — pick your dealership from the list to sign in.'
+  'The portal is showing UAT data — pick your dealership from the list and enter the shared password.'
 
 /**
  * A stand-in Session for demo mode. Nothing ever validates it (demo mode never
- * calls Supabase), it just satisfies the same shape the rest of the app reads —
- * so ProtectedRoute, Topbar and friends need no demo-specific branches.
+ * uses Supabase Auth — /api/uat-data checks the shared password instead), it
+ * just satisfies the same shape the rest of the app reads, so ProtectedRoute,
+ * Topbar and friends need no demo-specific branches.
  */
 function makeDemoSession(dealer: Dealer): Session {
   const user: User = {
@@ -65,12 +66,7 @@ function makeDemoSession(dealer: Dealer): Session {
 }
 
 function readStoredDemoDealer(): Dealer | null {
-  try {
-    return getDealer(localStorage.getItem(DEMO_DEALER_STORAGE_KEY))
-  } catch {
-    // Private browsing / storage disabled — just start signed out.
-    return null
-  }
+  return getDealer(readUatAccess()?.dealerId)
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -84,8 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return stored ? makeDemoSession(stored) : null
   })
   const [profile, setProfile] = useState<Profile | null>(() => {
-    const stored = DEMO_MODE ? readStoredDemoDealer() : null
-    return stored ? getDemoDataset(stored.id).profile : null
+    return DEMO_MODE && readStoredDemoDealer() ? (readUatAccess()?.profile ?? null) : null
   })
   const [loading, setLoading] = useState(!DEMO_MODE)
 
@@ -129,17 +124,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  function signInAsDealer(dealerId: string) {
+  async function signInAsDealer(dealerId: string, password: string) {
     const next = getDealer(dealerId)
-    if (!next) return
+    if (!next) return { error: 'Pick your dealership from the list.' }
+
+    // Checks the shared password and finds the dealer's GSTIN in the synced
+    // dealer directory — the key their Focus UAT data is filed under.
+    let row: { gstin: string; dealer_name: string; contact_person: string | null; phone: string | null } | null
     try {
-      localStorage.setItem(DEMO_DEALER_STORAGE_KEY, next.id)
-    } catch {
-      // Storage unavailable — the session just won't survive a refresh.
+      const res = await uatFetch<{ dealer: typeof row }>(
+        'session',
+        { names: [next.companyName, next.shortName].join('|') },
+        password,
+      )
+      row = res.dealer
+    } catch (err) {
+      if (err instanceof UatAuthError) return { error: 'Incorrect password.' }
+      return { error: err instanceof Error ? err.message : 'Could not reach the portal. Please try again.' }
     }
+
+    const nextProfile: Profile = {
+      id: next.id,
+      dealer_name: row?.contact_person || next.shortName,
+      company_name: row?.dealer_name || next.companyName,
+      phone: row?.phone ?? null,
+      gstin: row?.gstin ?? null,
+      role: 'dealer',
+      created_at: new Date().toISOString(),
+    }
+    writeUatAccess({ dealerId: next.id, password, gstin: row?.gstin ?? null, profile: nextProfile })
     setDealer(next)
-    setProfile(getDemoDataset(next.id).profile)
+    setProfile(nextProfile)
     setSession(makeDemoSession(next))
+    return { error: null }
   }
 
   async function signInWithPassword(email: string, password: string) {
@@ -172,11 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     if (DEMO_MODE) {
-      try {
-        localStorage.removeItem(DEMO_DEALER_STORAGE_KEY)
-      } catch {
-        // Storage unavailable — clearing React state below is enough.
-      }
+      clearUatAccess()
       setDealer(null)
       setProfile(null)
       setSession(null)
@@ -187,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function refreshProfile() {
     if (DEMO_MODE) {
-      if (dealer) setProfile(getDemoDataset(dealer.id).profile)
+      setProfile(readUatAccess()?.profile ?? null)
       return
     }
     if (session?.user) {

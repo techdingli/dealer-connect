@@ -1,19 +1,15 @@
 import type { ReactNode } from 'react'
 import { DatabaseZap } from 'lucide-react'
-import { DEMO_MODE } from '@/config/demo'
 import { cn } from '@/lib/utils'
 
-/* Live data comes from the Focus UAT (test) database, which doesn't carry
- * everything the portal can show — selling prices, invoice PDFs, a dealer's
- * own holdings and sales, warehouse cities. Where a page relies on one of
- * those, it says so with these instead of showing a blank or a ₹0. Both render
- * nothing in demo mode, whose generated data fills every field. Remove them
- * once the sync reads production Focus and the gaps are filled. */
+/* The portal's Focus data comes from the Focus UAT (test) database, which
+ * doesn't carry everything the portal can show — selling prices, invoice PDFs,
+ * a dealer's own holdings and sales, warehouse cities. Where a page relies on
+ * one of those, it says so with these instead of showing a blank or a ₹0.
+ * Remove them once the sync reads production Focus and the gaps are filled. */
 
 /** Banner explaining what this page is missing from the UAT data. */
 export function UatDataNotice({ children, className }: { children: ReactNode; className?: string }) {
-  if (DEMO_MODE) return null
-
   return (
     <div
       className={cn(

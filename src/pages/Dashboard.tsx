@@ -10,13 +10,15 @@ import { formatCurrencyShortINR, CURRENT_FY } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { DealerLogo } from '@/components/DealerLogo'
 import { DemoModeBanner } from '@/components/DemoModeNotice'
+import { UatDataNotice } from '@/components/UatDataNotice'
+import { DEMO_MODE } from '@/config/demo'
 
 const QUICK_LINKS = [
   { to: '/price-list', label: 'Price List', description: 'Browse the full Dingli product catalog & pricing', icon: Tags },
   { to: '/dingli-stock', label: 'Dingli India Stock', description: 'Live availability across Dingli India warehouses', icon: Warehouse },
   { to: '/my-stock', label: 'My Stock', description: 'Machines currently held at your dealership', icon: Boxes },
-  { to: '/invoices', label: 'Invoice History', description: `Every invoice raised in ${CURRENT_FY}`, icon: Receipt },
-  { to: '/ledger', label: 'Ledger', description: `Your running account statement for ${CURRENT_FY}`, icon: ScrollText },
+  { to: '/invoices', label: 'Invoice History', description: 'Every invoice raised against your dealership', icon: Receipt },
+  { to: '/ledger', label: 'Ledger', description: 'Your running account statement', icon: ScrollText },
   { to: '/service-requests', label: 'Service Requests', description: 'Raise & track machine service tickets', icon: Wrench },
   { to: '/feedback', label: 'Feedback & Suggestions', description: 'Tell us what’s working, and what isn’t', icon: MessageSquareHeart },
   { to: '/catalogs', label: 'Catalog Downloads', description: 'Spec sheets & product catalogs, ready to share', icon: BookMarked },
@@ -30,14 +32,21 @@ export default function Dashboard() {
   const { data: serviceRequests, isLoading: srLoading } = useServiceRequests()
 
   const displayName = profile?.dealer_name || user?.email?.split('@')[0] || 'Dealer'
-  const unpaidInvoices = invoices?.filter((i) => i.status !== 'paid').length ?? 0
+  const unpaidInvoices = invoices?.filter((i) => i.status === 'unpaid' || i.status === 'overdue').length ?? 0
   const openTickets = serviceRequests?.filter((s) => s.status === 'open' || s.status === 'in_progress').length ?? 0
   const totalStockUnits = dealerStock?.reduce((sum, s) => sum + s.quantity, 0) ?? 0
-  const totalInvoiceValue = invoices?.reduce((sum, i) => sum + Number(i.amount), 0) ?? 0
+  const totalInvoiceValue =
+    invoices?.filter((i) => i.fy === CURRENT_FY).reduce((sum, i) => sum + Number(i.amount), 0) ?? 0
 
   return (
     <div>
       <DemoModeBanner className="mb-6" />
+      {DEMO_MODE && profile && !profile.gstin && (
+        <UatDataNotice className="mb-6">
+          {profile.company_name ?? 'This dealership'} isn&apos;t in the Focus UAT dealer list, so there&apos;s
+          no ledger, invoice or purchase data to show for it.
+        </UatDataNotice>
+      )}
 
       <PageHeader
         eyebrow={CURRENT_FY}
@@ -50,7 +59,7 @@ export default function Dashboard() {
         {stockLoading ? (
           <Skeleton className="h-24" />
         ) : (
-          <StatCard icon={Boxes} label="Units in My Stock" value={totalStockUnits.toLocaleString('en-IN')} tone="green" delay={0} />
+          <StatCard icon={Boxes} label="Units Purchased" value={totalStockUnits.toLocaleString('en-IN')} tone="green" delay={0} />
         )}
         {invoicesLoading ? (
           <Skeleton className="h-24" />

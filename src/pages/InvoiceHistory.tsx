@@ -21,7 +21,7 @@ import type { Invoice } from '@/types/database'
 const statusLabel = (status: Invoice['status']) => status ?? 'unknown'
 
 export default function InvoiceHistory() {
-  const { profile, dealer, isDemo } = useAuth()
+  const { profile, dealer } = useAuth()
   const { data: invoices, isLoading } = useInvoices()
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [detailsInvoice, setDetailsInvoice] = useState<Invoice | null>(null)
@@ -50,11 +50,7 @@ export default function InvoiceHistory() {
 
   async function handleDownload(id: string, pdfPath: string | null) {
     if (!pdfPath) {
-      toast.info(
-        isDemo
-          ? 'No PDF is attached to this invoice yet.'
-          : "Invoice PDFs aren't in the Focus UAT data yet. Open View details and use Print for a copy.",
-      )
+      toast.info("Invoice PDFs aren't in the Focus UAT data yet. Open View details and use Print for a copy.")
       return
     }
     setDownloadingId(id)
@@ -73,7 +69,7 @@ export default function InvoiceHistory() {
       <PageHeader
         eyebrow={CURRENT_FY}
         title="Invoice History"
-        description="All invoices raised against your dealership for the current financial year."
+        description="Every invoice Dingli India has raised against your dealership, as synced from Focus UAT."
       />
 
       <UatDataNotice className="mb-4">
@@ -97,7 +93,7 @@ export default function InvoiceHistory() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={Receipt}
-            title={table.activeFilterCount ? 'No invoices match those filters' : `No invoices for ${CURRENT_FY}`}
+            title={table.activeFilterCount ? 'No invoices match those filters' : 'No invoices yet'}
             description={
               table.activeFilterCount
                 ? 'Try clearing a column filter.'
@@ -217,13 +213,6 @@ export default function InvoiceHistory() {
                 #invoice-print-area { position: absolute; inset: 0; width: 100%; padding: 0; }
               }
             `}</style>
-
-            {isDemo && (
-              <p className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200 print:hidden">
-                Downloading gives you a watermarked <strong>sample</strong> invoice PDF — the same
-                document for every invoice here, not this one's figures.
-              </p>
-            )}
 
             <div className="flex items-center justify-between print:hidden">
               <Badge tone={toneForStatus(statusLabel(activeInvoice.status))}>{statusLabel(activeInvoice.status)}</Badge>

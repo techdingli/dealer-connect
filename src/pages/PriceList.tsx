@@ -10,7 +10,6 @@ import { Modal } from '@/components/ui/Modal'
 import { ColumnFilter, FilterBar, FilterCount } from '@/components/ui/ColumnFilter'
 import { ManualViewer } from '@/components/ManualViewer'
 import { NotInUat, UatDataNotice } from '@/components/UatDataNotice'
-import { DEMO_MODE } from '@/config/demo'
 import { useTableFilters, type ColumnDef } from '@/hooks/useTableFilters'
 import { useProducts, useMachines } from '@/hooks/queries'
 import { formatCurrencyINR } from '@/lib/utils'
@@ -35,15 +34,10 @@ export default function PriceList() {
     [machines],
   )
 
-  // The demo catalogue lists only models with a manual — spare parts and the
-  // machine variants without one are excluded entirely. Live products come
-  // from Focus, whose UAT data has no Dingli model numbers to match a manual
-  // against, so every machine is listed and the manual button shows where a
-  // match exists.
-  const withManuals = useMemo(
-    () => (DEMO_MODE ? (products ?? []).filter((p) => manualsByModel.has(modelNumberOf(p))) : (products ?? [])),
-    [products, manualsByModel],
-  )
+  // Products come from Focus, whose UAT data has no Dingli model numbers to
+  // match a manual against, so every machine is listed and the manual button
+  // shows only where a match exists.
+  const withManuals = useMemo(() => products ?? [], [products])
   const hasManual = (p: Product) => manualsByModel.has(modelNumberOf(p))
 
   const searched = useMemo(() => {
@@ -80,11 +74,7 @@ export default function PriceList() {
       <PageHeader
         eyebrow="Reference Data"
         title="Price List"
-        description={
-          DEMO_MODE
-            ? 'Current pricing for every Dingli model with a service manual on file. Prices are exclusive of GST and freight unless noted.'
-            : 'Every machine in the Dingli product catalogue, as synced from Focus.'
-        }
+        description="Every machine in the Dingli product catalogue, as synced from Focus UAT."
       />
 
       <UatDataNotice className="mb-4">
@@ -114,18 +104,10 @@ export default function PriceList() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={PackageSearch}
-            title={
-              withManuals.length === 0
-                ? DEMO_MODE
-                  ? 'No models with a manual on file'
-                  : 'No products synced yet'
-                : 'No products found'
-            }
+            title={withManuals.length === 0 ? 'No products synced yet' : 'No products found'}
             description={
               withManuals.length === 0
-                ? DEMO_MODE
-                  ? 'This page lists models that have a service manual loaded. None are available yet.'
-                  : 'Products appear here after the Focus sync has run.'
+                ? 'Products appear here after the Focus sync has run.'
                 : 'Try a different search term or filter.'
             }
           />

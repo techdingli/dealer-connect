@@ -24,6 +24,7 @@
 // works end-to-end before you've added a key. Nothing else changes when you
 // do add one — same request shape, same UI, just smarter answers.
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
@@ -44,7 +45,49 @@ type ChatBody = {
   category: 'dealer' | 'support' | 'products'
   messages: Anthropic.MessageParam[]
   accessToken?: string
+  /** Demo (UAT) mode: the shared password and the chosen dealer's GSTIN. */
+  uat?: { password?: string; gstin?: string | null }
   machineModel?: string
+}
+
+/**
+ * Whose data a chat may read. Live mode: the dealer's own Supabase session,
+ * so RLS scopes every query and gstin is null. Demo (UAT) mode has no
+ * per-dealer accounts — the shared UAT password unlocks a service-role client
+ * and every dealer query is pinned to the chosen dealer's GSTIN by hand.
+ */
+type DataScope = { supabase: SupabaseClient; gstin: string | null; uat: boolean }
+
+function uatPasswordOk(given: string | undefined): boolean {
+  const expected = process.env.UAT_ACCESS_PASSWORD?.trim()
+  if (!expected || !given) return false
+  const a = createHash('sha256').update(given).digest()
+  const b = createHash('sha256').update(expected).digest()
+  return timingSafeEqual(a, b)
+}
+
+async function resolveScope(body: ChatBody): Promise<DataScope> {
+  if (body.uat) {
+    if (!uatPasswordOk(body.uat.password)) throw new Error('unauthorized')
+    const url = (process.env.SUPABASE_URL || SUPABASE_URL || '').trim()
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+    if (!url.startsWith('http') || !key) throw new Error('Supabase service access is not configured.')
+    const gstin = (body.uat.gstin ?? '').trim().toUpperCase()
+    return {
+      supabase: createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }),
+      gstin: /^[0-9A-Z]{15}$/.test(gstin) ? gstin : null,
+      uat: true,
+    }
+  }
+
+  if (!body.accessToken) throw new Error('unauthorized')
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${body.accessToken}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data: userData, error: userError } = await supabase.auth.getUser()
+  if (userError || !userData.user) throw new Error('unauthorized')
+  return { supabase, gstin: null, uat: false }
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -235,13 +278,18 @@ function summarizeInvoices(
   }
 }
 
-async function runDealerTool(name: string, supabase: SupabaseClient, input: Record<string, unknown> = {}): Promise<unknown> {
+async function runDealerTool(name: string, scope: DataScope, input: Record<string, unknown> = {}): Promise<unknown> {
+  const { supabase, gstin } = scope
+  // A UAT scope is service-role, so without a GSTIN it must return nothing
+  // rather than every dealer's rows.
+  if (scope.uat && !gstin) return []
   switch (name) {
     case 'get_invoices': {
-      const { data, error } = await supabase
+      let query = supabase
         .from('dealer_invoices')
         .select('invoice_number, invoice_date, amount, outstanding, status')
-        .order('invoice_date', { ascending: false })
+      if (gstin) query = query.eq('gstin', gstin)
+      const { data, error } = await query.order('invoice_date', { ascending: false })
       if (error) throw error
       return summarizeInvoices(data ?? [])
     }
@@ -251,6 +299,7 @@ async function runDealerTool(name: string, supabase: SupabaseClient, input: Reco
         .select(
           'invoice_number, fy, invoice_date, amount, outstanding, due_date, status, dealer_invoice_items(description, quantity, unit_price, line_total)',
         )
+      if (gstin) query = query.eq('gstin', gstin)
       if (typeof input.status === 'string') query = query.eq('status', input.status)
       if (typeof input.invoice_number === 'string') query = query.eq('invoice_number', input.invoice_number)
       const { data, error } = await query.order('invoice_date', { ascending: false })
@@ -262,9 +311,9 @@ async function runDealerTool(name: string, supabase: SupabaseClient, input: Reco
       // ledger runs past that — a truncated summary would misstate the balance.
       const entries: { entry_date: string; voucher_type: string | null; debit: number; credit: number }[] = []
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await supabase
-          .from('dealer_ledger')
-          .select('entry_date, voucher_type, debit, credit')
+        let query = supabase.from('dealer_ledger').select('entry_date, voucher_type, debit, credit')
+        if (gstin) query = query.eq('gstin', gstin)
+        const { data, error } = await query
           .order('entry_date', { ascending: true })
           .order('body_id', { ascending: true })
           .range(from, from + 999)
@@ -278,6 +327,7 @@ async function runDealerTool(name: string, supabase: SupabaseClient, input: Reco
       let query = supabase
         .from('dealer_ledger')
         .select('entry_date, voucher_no, voucher_type, description, debit, credit')
+      if (gstin) query = query.eq('gstin', gstin)
       if (typeof input.from_date === 'string') query = query.gte('entry_date', input.from_date)
       if (typeof input.to_date === 'string') query = query.lte('entry_date', input.to_date)
       if (typeof input.voucher_type === 'string') query = query.eq('voucher_type', input.voucher_type)
@@ -286,6 +336,9 @@ async function runDealerTool(name: string, supabase: SupabaseClient, input: Reco
       return data
     }
     case 'get_service_requests': {
+      // Tickets belong to portal accounts, which UAT mode doesn't have, and
+      // Focus UAT holds no service history.
+      if (gstin) return []
       const { data, error } = await supabase
         .from('service_requests')
         .select('machine_model, serial_number, issue_description, priority, status, created_at, resolved_at')
@@ -294,10 +347,11 @@ async function runDealerTool(name: string, supabase: SupabaseClient, input: Reco
       return data
     }
     case 'get_dealer_stock': {
-      const { data, error } = await supabase
+      let query = supabase
         .from('dealer_invoice_items')
         .select('description, sku, quantity, unit_price, line_total, invoice:dealer_invoices(invoice_number, invoice_date)')
-        .order('focus_header_id', { ascending: false })
+      if (gstin) query = query.eq('gstin', gstin)
+      const { data, error } = await query.order('focus_header_id', { ascending: false })
       if (error) throw error
       return data
     }
@@ -317,13 +371,13 @@ Rules:
 - Be concise and direct. When presenting more than 2-3 records (invoices, ledger entries, stock items, etc.), format them as a GitHub-flavored Markdown table with clear column headers — not a bullet list. For a single record or a short narrative answer, plain prose is fine.
 - If a tool returns no rows, say so plainly rather than inventing an answer.`
 
-async function runDealerChatMock(messages: Anthropic.MessageParam[], supabase: SupabaseClient): Promise<string> {
+async function runDealerChatMock(messages: Anthropic.MessageParam[], scope: DataScope): Promise<string> {
   const question = extractUserText(messages[messages.length - 1]?.content ?? '').toLowerCase()
 
   if (/(ledger|balance|owe|outstanding)/.test(question)) {
     // Mock mode calls the same summary tool the real Claude path is steered
     // towards by default — no need to reimplement the aggregation twice.
-    const summary = (await runDealerTool('get_ledger', supabase)) as LedgerSummary
+    const summary = (await runDealerTool('get_ledger', scope)) as LedgerSummary
     if (!summary.entry_count) return `You have no ledger entries on file yet.${MOCK_NOTICE}`
     const range = summary.date_range ? ` from ${summary.date_range.from} to ${summary.date_range.to}` : ''
     return `Your ledger (payments and adjustments only, no running balance): ${summary.entry_count} entries${range}, total debit ${formatINR(summary.total_debit)}, total credit ${formatINR(summary.total_credit)}.${MOCK_NOTICE}`
@@ -337,7 +391,7 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], supabase: S
       // get_invoice_detail is for. No status filter here because "unpaid" in
       // this UI means "anything other than paid" (unpaid or overdue), which
       // is a broader match than the tool's single-status filter supports.
-      const invoices = (await runDealerTool('get_invoice_detail', supabase)) as Array<{
+      const invoices = (await runDealerTool('get_invoice_detail', scope)) as Array<{
         invoice_number: string
         amount: number
         status: string
@@ -348,7 +402,7 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], supabase: S
       return `Unpaid invoices:\n\n| Invoice # | Amount | Status |\n| --- | --- | --- |\n${rows}${MOCK_NOTICE}`
     }
 
-    const summary = (await runDealerTool('get_invoices', supabase)) as InvoiceSummary
+    const summary = (await runDealerTool('get_invoices', scope)) as InvoiceSummary
     if (!summary.invoice_count) return `You have no invoices on file yet.${MOCK_NOTICE}`
     const byStatus = summary.by_status.map((s) => `${s.count} ${s.status}`).join(', ')
     const recent = summary.most_recent_invoice
@@ -357,7 +411,7 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], supabase: S
   }
 
   if (/(stock|inventory|units)/.test(question)) {
-    const purchases = (await runDealerTool('get_dealer_stock', supabase)) as Array<{
+    const purchases = (await runDealerTool('get_dealer_stock', scope)) as Array<{
       description: string
       quantity: number
       invoice: { invoice_number: string } | null
@@ -370,7 +424,7 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], supabase: S
   }
 
   if (/(service|ticket|repair|request)/.test(question)) {
-    const requests = (await runDealerTool('get_service_requests', supabase)) as Array<{
+    const requests = (await runDealerTool('get_service_requests', scope)) as Array<{
       machine_model: string
       priority: string
       status: string
@@ -380,22 +434,12 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], supabase: S
     return `Your service requests:\n${lines}${MOCK_NOTICE}`
   }
 
-  return `I'm running in demo mode without a live AI key yet, so I can only answer direct questions about your invoices, ledger balance, stock, or service requests right now. Try one of the suggestions above.`
+  return `I'm running without a live AI key yet, so I can only answer direct questions about your invoices, ledger balance, stock, or service requests right now. Try one of the suggestions above.`
 }
 
-async function runDealerChat(messages: Anthropic.MessageParam[], accessToken: string): Promise<string> {
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
-
-  const { data: userData, error: userError } = await supabase.auth.getUser()
-  if (userError || !userData.user) {
-    throw new Error('unauthorized')
-  }
-
+async function runDealerChat(messages: Anthropic.MessageParam[], scope: DataScope): Promise<string> {
   if (!HAS_API_KEY) {
-    return runDealerChatMock(messages, supabase)
+    return runDealerChatMock(messages, scope)
   }
 
   const convo: Anthropic.MessageParam[] = [...messages]
@@ -419,7 +463,7 @@ async function runDealerChat(messages: Anthropic.MessageParam[], accessToken: st
     const toolResults: Anthropic.ToolResultBlockParam[] = []
     for (const block of toolUseBlocks) {
       try {
-        const result = await runDealerTool(block.name, supabase, block.input as Record<string, unknown>)
+        const result = await runDealerTool(block.name, scope, block.input as Record<string, unknown>)
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) })
       } catch (err) {
         toolResults.push({
@@ -539,7 +583,7 @@ async function runSupportChatMock(question: string, machine: { model_name: strin
   const [top] = sections.map((s) => ({ ...s, score: scoreSection(s, words) })).sort((a, b) => b.score - a.score)
 
   if (!top || top.score === 0) {
-    return `I couldn't find a matching section for that in the ${machine.model_name} manual — demo mode uses keyword search, not full understanding, so try mentioning a specific part or assembly name.${MOCK_NOTICE}`
+    return `I couldn't find a matching section for that in the ${machine.model_name} manual — without an AI key I use keyword search, not full understanding, so try mentioning a specific part or assembly name.${MOCK_NOTICE}`
   }
 
   const excerpt = top.body.slice(0, 900).trim()
@@ -549,18 +593,8 @@ async function runSupportChatMock(question: string, machine: { model_name: strin
 async function runSupportChat(
   messages: Anthropic.MessageParam[],
   machineModel: string,
-  accessToken: string,
+  { supabase }: DataScope,
 ): Promise<string> {
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
-
-  const { data: userData, error: userError } = await supabase.auth.getUser()
-  if (userError || !userData.user) {
-    throw new Error('unauthorized')
-  }
-
   const { data: machine, error } = await supabase
     .from('machines')
     .select('model_name, category, manual_text')
@@ -707,17 +741,7 @@ You are talking to a dealer, so be commercially useful: when someone describes a
 
 When presenting more than two models, use a GitHub-flavored Markdown table with clear column headers. Keep answers short and concrete.`
 
-async function runProductChat(messages: Anthropic.MessageParam[], accessToken: string): Promise<string> {
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
-
-  const { data: userData, error: userError } = await supabase.auth.getUser()
-  if (userError || !userData.user) {
-    throw new Error('unauthorized')
-  }
-
+async function runProductChat(messages: Anthropic.MessageParam[], { supabase }: DataScope): Promise<string> {
   const { data: rows, error } = await supabase
     .from('products')
     .select('sku, name, category, unit, price, description')
@@ -775,9 +799,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     return
   }
 
-  const { category, messages, accessToken, machineModel } = body
+  const { category, messages, machineModel } = body
 
-  if (!accessToken) {
+  if (!body.accessToken && !body.uat) {
     sendJson(res, 401, { error: 'Missing access token' })
     return
   }
@@ -787,14 +811,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   try {
+    const scope = await resolveScope(body)
+
     if (category === 'dealer') {
-      const reply = await runDealerChat(messages, accessToken)
+      const reply = await runDealerChat(messages, scope)
       sendJson(res, 200, { reply })
       return
     }
 
     if (category === 'products') {
-      const reply = await runProductChat(messages, accessToken)
+      const reply = await runProductChat(messages, scope)
       sendJson(res, 200, { reply })
       return
     }
@@ -804,7 +830,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         sendJson(res, 400, { error: 'Missing machineModel' })
         return
       }
-      const reply = await runSupportChat(messages, machineModel, accessToken)
+      const reply = await runSupportChat(messages, machineModel, scope)
       sendJson(res, 200, { reply })
       return
     }

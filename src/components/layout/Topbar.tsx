@@ -43,8 +43,8 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         <DemoModeBadge />
       </div>
 
-      {/* Phones lose the greeting but keep the demo flag — it should never be
-          possible to look at this portal and not know the data is generated. */}
+      {/* Phones lose the greeting but keep the UAT flag — it should never be
+          possible to look at this portal and mistake UAT figures for production. */}
       <div className="sm:hidden">
         <DemoModeBadge />
       </div>
