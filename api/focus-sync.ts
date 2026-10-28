@@ -599,34 +599,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       })
     }
 
-    // TEMPORARY (remove once invoice-document discovery is done): columns and a
-    // few rows of one table, to find where actual invoice documents live.
-    // Binary values come back as their byte length, never their contents.
-    if (action === 'peek') {
-      const db = params.get('db') ?? FOCUS_DB
-      const allowed = [FOCUS_DB, process.env.FOCUS_CRM_DB?.trim()].filter(Boolean)
-      if (!allowed.includes(db)) return send(res, 400, { error: 'Unknown db.' })
-      const table = params.get('table') ?? ''
-      const cols = await q(
-        pool,
-        `SELECT COLUMN_NAME AS name, DATA_TYPE AS type FROM [${db}].INFORMATION_SCHEMA.COLUMNS
-          WHERE TABLE_NAME = @t ORDER BY ORDINAL_POSITION`,
-        { t: table },
-      )
-      if (!cols.length) return send(res, 404, { error: `Table '${table}' not found in '${db}'.` })
-      const top = Math.min(Math.max(Number(params.get('top')) || 5, 1), 20)
-      const rows = await q(pool, `SELECT TOP ${top} * FROM [${db}].[dbo].[${table.replace(/[^\w]/g, '')}]`)
-      const safe = rows.map((r) =>
-        Object.fromEntries(
-          Object.entries(r).map(([k, v]) => [
-            k,
-            Buffer.isBuffer(v) ? `<binary ${v.length} bytes>` : typeof v === 'string' && v.length > 400 ? `${v.slice(0, 400)}… (${v.length} chars)` : v,
-          ]),
-        ),
-      )
-      return send(res, 200, { ok: true, db, table, columns: cols, rows: safe })
-    }
-
     if (action === 'inspect-catalog') {
       // Product groups (the tree Focus users file items under) with how many
       // leaf products and how much on-hand stock sit beneath each one.
