@@ -25,6 +25,7 @@
 //   ?action=inspect&gstin=G           raw Focus postings for one dealer (mapping checks)
 //   ?action=freshness                 restore history and newest vouchers (is UAT current?)
 //   ?action=file-columns              tables that store files in the DB, with counts
+//   ?action=companies                 invoices per group-company prefix, openable databases
 //
 // Env: FOCUS_DB_USERNAME, FOCUS_DB_PASSWORD, FOCUS_UAT_DB_IP, FOCUS_MAIN_DB,
 //      SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL (or an absolute VITE_SUPABASE_URL),
@@ -691,6 +692,39 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       }
       out.sort((a, b) => Number(b.filled ?? b.tableRows) - Number(a.filled ?? a.tableRows))
       return send(res, 200, { ok: true, ms: Date.now() - started, columns: out })
+    }
+
+    // Which group companies' invoices this Focus copy holds. Focus8070 carries
+    // several Mtandt group companies; a voucher number starts with its
+    // company's code (DI… Dingli, MR… MRL). Also lists the databases this login
+    // can open, in case a company lives elsewhere. Counts and dates only.
+    if (action === 'companies') {
+      const databases = await q(
+        pool,
+        `SELECT name, CAST(HAS_DBACCESS(name) AS int) AS canOpen FROM sys.databases WHERE database_id > 4 ORDER BY name`,
+      )
+      const invoices = await q(
+        pool,
+        `SELECT LEFT(h.sVoucherNo, 2) AS prefix, v.sName AS voucherType, COUNT(*) AS invoices,
+                MIN(h.iDate) AS earliest, MAX(h.iDate) AS latest, SUM(ABS(h.fNet)) AS value,
+                MAX(h.sVoucherNo) AS exampleNo
+           FROM tCore_Header_0 h
+           JOIN cCore_Vouchers_0 v ON v.iVoucherType = h.iVoucherType
+          WHERE h.iVoucherType BETWEEN ${SALES_VOUCHER_MIN} AND ${SALES_VOUCHER_MAX}
+            AND v.bUpdateFA = 1 AND h.bCancelled = 0 AND h.bDraft = 0
+          GROUP BY LEFT(h.sVoucherNo, 2), v.sName
+          ORDER BY invoices DESC`,
+      )
+      return send(res, 200, {
+        ok: true,
+        ms: Date.now() - started,
+        databases,
+        invoicesByCompanyPrefix: invoices.map((r) => ({
+          ...r,
+          earliest: focusDate(r.earliest),
+          latest: focusDate(r.latest),
+        })),
+      })
     }
 
     if (action === 'inspect-catalog') {
