@@ -23,6 +23,8 @@
 //   ?dryRun=1&gstin=G1,G2             map everything, write nothing, return samples
 //   ?action=find&q=NAME               look up Focus accounts by name (GSTIN discovery)
 //   ?action=inspect&gstin=G           raw Focus postings for one dealer (mapping checks)
+//   ?action=freshness                 restore history and newest vouchers (is UAT current?)
+//   ?action=file-columns              tables that store files in the DB, with counts
 //
 // Env: FOCUS_DB_USERNAME, FOCUS_DB_PASSWORD, FOCUS_UAT_DB_IP, FOCUS_MAIN_DB,
 //      SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL (or an absolute VITE_SUPABASE_URL),
@@ -597,6 +599,87 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         recent: recent.map((r) => ({ ...r, date: focusDate(r.iDate) })),
         refs: refs.map((r) => ({ ...r, due: focusDate(r.due) })),
       })
+    }
+
+    // How fresh the Focus copy is: restore history (a UAT refresh from
+    // production shows up as a restore), database creation dates, and the
+    // newest vouchers by posting and entry date. Dates and counts only.
+    if (action === 'freshness') {
+      const dbs = [FOCUS_DB, process.env.FOCUS_CRM_DB?.trim()].filter((d): d is string => !!d)
+      const databases = await q(
+        pool,
+        `SELECT name, create_date AS createdOrRestored FROM sys.databases WHERE name IN (${dbs.map((_, i) => `@d${i}`).join(',')})`,
+        Object.fromEntries(dbs.map((d, i) => [`d${i}`, d])),
+      )
+      let restores: Row[] | string
+      try {
+        restores = await q(
+          pool,
+          `SELECT TOP 10 rh.destination_database_name AS db, rh.restore_date AS restoredAt,
+                  bs.backup_finish_date AS backupTakenAt, bs.server_name AS sourceServer,
+                  bs.database_name AS sourceDatabase
+             FROM msdb.dbo.restorehistory rh
+             JOIN msdb.dbo.backupset bs ON bs.backup_set_id = rh.backup_set_id
+            ORDER BY rh.restore_date DESC`,
+        )
+      } catch (err) {
+        restores = `not readable with this login: ${err instanceof Error ? err.message : String(err)}`
+      }
+      const today = new Date()
+      const todayPacked = (today.getFullYear() << 16) | ((today.getMonth() + 1) << 8) | today.getDate()
+      const latest = await q(
+        pool,
+        `SELECT COUNT(*) AS vouchers,
+                MAX(CASE WHEN iDate <= ${todayPacked} THEN iDate END) AS latestPostingDate,
+                MAX(iCreatedDate) AS latestEntryDate
+           FROM tCore_Header_0`,
+      )
+      const byEntryDay = await q(
+        pool,
+        `SELECT TOP 10 iCreatedDate AS day, COUNT(*) AS vouchers
+           FROM tCore_Header_0 GROUP BY iCreatedDate ORDER BY iCreatedDate DESC`,
+      )
+      return send(res, 200, {
+        ok: true,
+        ms: Date.now() - started,
+        databases,
+        restores,
+        vouchers: {
+          total: latest[0]?.vouchers,
+          latestPostingDate: focusDate(latest[0]?.latestPostingDate),
+          latestEntryDate: focusDate(latest[0]?.latestEntryDate),
+          byEntryDay: byEntryDay.map((r) => ({ day: focusDate(r.day), vouchers: r.vouchers })),
+        },
+      })
+    }
+
+    // Which tables store files inside the database (binary columns) and how
+    // many rows actually hold one. Metadata only — never file contents.
+    if (action === 'file-columns') {
+      const dbs = [FOCUS_DB, process.env.FOCUS_CRM_DB?.trim()].filter((d): d is string => !!d)
+      const out: Row[] = []
+      for (const db of dbs) {
+        const cols = await q(
+          pool,
+          `SELECT c.TABLE_NAME AS t, c.COLUMN_NAME AS c, c.DATA_TYPE AS type
+             FROM [${db}].INFORMATION_SCHEMA.COLUMNS c
+             JOIN [${db}].INFORMATION_SCHEMA.TABLES t
+               ON t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_TYPE = 'BASE TABLE'
+            WHERE c.DATA_TYPE IN ('varbinary', 'image', 'binary') AND c.TABLE_SCHEMA = 'dbo'`,
+        )
+        for (const col of cols) {
+          const t = String(col.t).replace(/[^\w]/g, '')
+          const c = String(col.c).replace(/[^\w]/g, '')
+          const [r] = await q(
+            pool,
+            `SELECT COUNT(*) AS filled, SUM(CAST(DATALENGTH([${c}]) AS bigint)) AS bytes
+               FROM [${db}].[dbo].[${t}] WHERE [${c}] IS NOT NULL AND DATALENGTH([${c}]) > 0`,
+          )
+          if (Number(r?.filled) > 0) out.push({ db, table: t, column: c, type: col.type, filled: r!.filled, bytes: r!.bytes })
+        }
+      }
+      out.sort((a, b) => Number(b.filled) - Number(a.filled))
+      return send(res, 200, { ok: true, ms: Date.now() - started, columns: out })
     }
 
     if (action === 'inspect-catalog') {
