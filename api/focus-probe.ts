@@ -122,11 +122,96 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       })
     }
 
+    // Find MRL-named tables across BOTH configured DBs, with row counts and a
+    // best-effort "last written" time, in one call. No db param — it walks the
+    // two Focus DBs itself. ?term= overrides the default 'mrl' match.
+    if (action === 'mrl') {
+      const term = (q.get('term') ?? 'mrl').toLowerCase().replace(/[^a-z0-9_]/g, '')
+      if (!term) return send(res, 400, { error: 'term must be alphanumeric.' })
+      pool = await connect(undefined, encrypt)
+      const dbs = (await pool.request().query('SELECT name FROM sys.databases'))
+        .recordset.map((r: { name: string }) => r.name)
+      const targets = [process.env.FOCUS_CRM_DB, process.env.FOCUS_MAIN_DB]
+        .filter((d): d is string => typeof d === 'string' && dbs.includes(d))
+      const out: Record<string, unknown> = {}
+      for (const d of targets) {
+        const dbPool = await connect(d, encrypt)
+        try {
+          const tbls = (await dbPool.request().query(
+            `SELECT s.name AS [schema], t.name AS [table], SUM(p.rows) AS [rows],
+                    t.modify_date AS schemaModified
+               FROM sys.tables t
+               JOIN sys.schemas s ON s.schema_id = t.schema_id
+               JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0,1)
+              WHERE LOWER(t.name) LIKE '%${term}%'
+              GROUP BY s.name, t.name, t.modify_date
+              ORDER BY t.name`,
+          )).recordset as { schema: string; table: string; rows: number; schemaModified: string }[]
+          // last_user_update is the newest write (insert/update/delete) the
+          // engine has seen since its last restart; best-effort, may lack perms.
+          const lastWrite: Record<string, string> = {}
+          try {
+            const u = (await dbPool.request().query(
+              `SELECT OBJECT_NAME(object_id) AS tbl, MAX(last_user_update) AS lastUpdate
+                 FROM sys.dm_db_index_usage_stats
+                WHERE database_id = DB_ID()
+                GROUP BY object_id`,
+            )).recordset as { tbl: string; lastUpdate: string }[]
+            for (const row of u) if (row.tbl) lastWrite[row.tbl.toLowerCase()] = row.lastUpdate
+          } catch { /* no VIEW SERVER STATE permission */ }
+          out[d] = tbls.map((t) => ({ ...t, lastUserUpdate: lastWrite[t.table.toLowerCase()] ?? null }))
+        } finally {
+          await dbPool.close().catch(() => {})
+        }
+      }
+      return send(res, 200, {
+        ok: true, ms: Date.now() - started, term,
+        note: 'lastUserUpdate is from sys.dm_db_index_usage_stats and RESETS on SQL Server restart '
+          + '(null = no writes since restart, or no permission). For the real newest data date, call '
+          + 'action=recency&db=DB&table=T, which returns MAX() of each date column in the table.',
+        mrlTables: out,
+      })
+    }
+
     const db = q.get('db')
     if (!db) return send(res, 400, { error: 'db query param required for this action.' })
     pool = await connect(undefined, encrypt)
     if (!(await assertDb(pool, db))) {
       return send(res, 404, { error: `Database '${db}' not found or not visible to this login.` })
+    }
+
+    // Newest value of every date/datetime column in a table — the most reliable
+    // "was this data updated recently" signal (survives server restarts).
+    if (action === 'recency') {
+      const table = q.get('table')
+      if (!table) return send(res, 400, { error: 'table query param required.' })
+      const meta = (await pool.request().input('t', sql.NVarChar, table).query(
+        `SELECT TABLE_SCHEMA AS s, TABLE_NAME AS n
+           FROM [${db}].INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = @t`,
+      )).recordset[0] as { s: string; n: string } | undefined
+      if (!meta) return send(res, 404, { error: `Table '${table}' not found in '${db}'.` })
+      const dateCols = (await pool.request().input('t', sql.NVarChar, table).query(
+        `SELECT COLUMN_NAME FROM [${db}].INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_NAME = @t AND DATA_TYPE IN ('date','datetime','datetime2','smalldatetime')
+          ORDER BY ORDINAL_POSITION`,
+      )).recordset.map((r: { COLUMN_NAME: string }) => r.COLUMN_NAME)
+      if (dateCols.length === 0) {
+        return send(res, 200, {
+          ok: true, ms: Date.now() - started, db, table: `${meta.s}.${meta.n}`,
+          dateColumns: [], note: 'No date/datetime columns to measure recency on this table.',
+        })
+      }
+      const sel = dateCols.map((c) => `MAX([${c}]) AS [${c}]`).join(', ')
+      const rowCount = (await pool.request().query(
+        `SELECT COUNT(*) AS n FROM [${db}].[${meta.s}].[${meta.n}]`,
+      )).recordset[0]?.n
+      const maxes = (await pool.request().query(
+        `SELECT ${sel} FROM [${db}].[${meta.s}].[${meta.n}]`,
+      )).recordset[0]
+      return send(res, 200, {
+        ok: true, ms: Date.now() - started, db, table: `${meta.s}.${meta.n}`,
+        rows: rowCount, dateColumns: dateCols, latestPerColumn: maxes,
+      })
     }
 
     if (action === 'tables') {
