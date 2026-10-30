@@ -654,31 +654,42 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
 
     // Which tables store files inside the database (binary columns) and how
-    // many rows actually hold one. Metadata only — never file contents.
+    // many rows actually hold one. Metadata only — never file contents. Row
+    // counts come from SQL Server's catalog; only tables up to MEASURE_ROWS
+    // are scanned for filled/bytes, so the call fits in the function timeout.
     if (action === 'file-columns') {
+      const MEASURE_ROWS = 50000
       const dbs = [FOCUS_DB, process.env.FOCUS_CRM_DB?.trim()].filter((d): d is string => !!d)
       const out: Row[] = []
       for (const db of dbs) {
         const cols = await q(
           pool,
-          `SELECT c.TABLE_NAME AS t, c.COLUMN_NAME AS c, c.DATA_TYPE AS type
-             FROM [${db}].INFORMATION_SCHEMA.COLUMNS c
-             JOIN [${db}].INFORMATION_SCHEMA.TABLES t
-               ON t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_TYPE = 'BASE TABLE'
-            WHERE c.DATA_TYPE IN ('varbinary', 'image', 'binary') AND c.TABLE_SCHEMA = 'dbo'`,
+          `SELECT t.name AS t, c.name AS c, ty.name AS type,
+                  (SELECT SUM(p.rows) FROM [${db}].sys.partitions p
+                    WHERE p.object_id = t.object_id AND p.index_id IN (0, 1)) AS tableRows
+             FROM [${db}].sys.tables t
+             JOIN [${db}].sys.columns c ON c.object_id = t.object_id
+             JOIN [${db}].sys.types ty ON ty.user_type_id = c.user_type_id
+            WHERE ty.name IN ('varbinary', 'image', 'binary') AND SCHEMA_NAME(t.schema_id) = 'dbo'`,
         )
         for (const col of cols) {
+          const rows = Number(col.tableRows) || 0
+          if (rows === 0) continue
           const t = String(col.t).replace(/[^\w]/g, '')
           const c = String(col.c).replace(/[^\w]/g, '')
+          if (rows > MEASURE_ROWS) {
+            out.push({ db, table: t, column: c, type: col.type, tableRows: rows, filled: null, bytes: null })
+            continue
+          }
           const [r] = await q(
             pool,
             `SELECT COUNT(*) AS filled, SUM(CAST(DATALENGTH([${c}]) AS bigint)) AS bytes
-               FROM [${db}].[dbo].[${t}] WHERE [${c}] IS NOT NULL AND DATALENGTH([${c}]) > 0`,
+               FROM [${db}].[dbo].[${t}] WHERE DATALENGTH([${c}]) > 0`,
           )
-          if (Number(r?.filled) > 0) out.push({ db, table: t, column: c, type: col.type, filled: r!.filled, bytes: r!.bytes })
+          if (Number(r?.filled) > 0) out.push({ db, table: t, column: c, type: col.type, tableRows: rows, filled: r!.filled, bytes: r!.bytes })
         }
       }
-      out.sort((a, b) => Number(b.filled) - Number(a.filled))
+      out.sort((a, b) => Number(b.filled ?? b.tableRows) - Number(a.filled ?? a.tableRows))
       return send(res, 200, { ok: true, ms: Date.now() - started, columns: out })
     }
 
