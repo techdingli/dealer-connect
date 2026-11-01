@@ -386,7 +386,9 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], scope: Data
     const summary = (await runDealerTool('get_ledger', scope)) as LedgerSummary
     if (!summary.entry_count) return `You have no ledger entries on file yet.${MOCK_NOTICE}`
     const range = summary.date_range ? ` from ${summary.date_range.from} to ${summary.date_range.to}` : ''
-    return `Your ledger (payments and adjustments only, no running balance): ${summary.entry_count} entries${range}, total debit ${formatINR(summary.total_debit)}, total credit ${formatINR(summary.total_credit)}.${MOCK_NOTICE}`
+    const balance = summary.total_debit - summary.total_credit
+    const owed = balance >= 0 ? `you owe ${formatINR(balance)}` : `you are in credit by ${formatINR(-balance)}`
+    return `Your ledger: ${summary.entry_count} entries${range}, total debit ${formatINR(summary.total_debit)}, total credit ${formatINR(summary.total_credit)} — ${owed}.${MOCK_NOTICE}`
   }
 
   if (/(invoice|bill)/.test(question)) {
