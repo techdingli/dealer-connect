@@ -29,6 +29,12 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 const HAS_API_KEY = Boolean(process.env.ANTHROPIC_API_KEY?.trim())
+// Set once Anthropic rejects the configured key (401). From then on this
+// instance answers with the keyword fallback instead of failing every chat —
+// a bad key should degrade the assistant, not break it. The rejection is
+// logged so it shows up in the function logs.
+let aiKeyRejected = false
+const aiEnabled = () => HAS_API_KEY && !aiKeyRejected
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL!
@@ -39,7 +45,7 @@ const MAX_TOKENS = 4096
 const MAX_TOOL_ITERATIONS = 6
 
 const MOCK_NOTICE =
-  '\n\n_(No AI key connected yet — this answer used real data with simple keyword matching; setting `ANTHROPIC_API_KEY` switches this to full natural-language understanding, no other changes needed.)_'
+  '\n\n_(The AI assistant isn\'t connected right now, so this answer used your real data with simple keyword matching. A valid `ANTHROPIC_API_KEY` switches it back to full natural-language answers.)_'
 
 type ChatBody = {
   category: 'dealer' | 'support' | 'products'
@@ -438,7 +444,7 @@ async function runDealerChatMock(messages: Anthropic.MessageParam[], scope: Data
 }
 
 async function runDealerChat(messages: Anthropic.MessageParam[], scope: DataScope): Promise<string> {
-  if (!HAS_API_KEY) {
+  if (!aiEnabled()) {
     return runDealerChatMock(messages, scope)
   }
 
@@ -609,7 +615,7 @@ async function runSupportChat(
     return `I don't have a manual on file for the ${machine.model_name} yet, so I can't answer service questions for it. Please contact Dingli India support directly for this model.`
   }
 
-  if (!HAS_API_KEY) {
+  if (!aiEnabled()) {
     const question = extractUserText(messages[messages.length - 1]?.content ?? '')
     return runSupportChatMock(question, { model_name: machine.model_name, manual_text: machine.manual_text })
   }
@@ -758,7 +764,7 @@ async function runProductChat(messages: Anthropic.MessageParam[], { supabase }: 
 
   const catalogue = rows as CatalogueRow[]
 
-  if (!HAS_API_KEY) {
+  if (!aiEnabled()) {
     const question = extractUserText(messages[messages.length - 1]?.content ?? '')
     return runProductChatMock(question, catalogue)
   }
@@ -813,29 +819,33 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const scope = await resolveScope(body)
 
-    if (category === 'dealer') {
-      const reply = await runDealerChat(messages, scope)
-      sendJson(res, 200, { reply })
+    if (category === 'support' && !machineModel) {
+      sendJson(res, 400, { error: 'Missing machineModel' })
+      return
+    }
+    if (category !== 'dealer' && category !== 'products' && category !== 'support') {
+      sendJson(res, 400, { error: 'category must be "dealer", "products" or "support"' })
       return
     }
 
-    if (category === 'products') {
-      const reply = await runProductChat(messages, scope)
-      sendJson(res, 200, { reply })
-      return
-    }
+    const answer = () =>
+      category === 'dealer'
+        ? runDealerChat(messages, scope)
+        : category === 'products'
+          ? runProductChat(messages, scope)
+          : runSupportChat(messages, machineModel!, scope)
 
-    if (category === 'support') {
-      if (!machineModel) {
-        sendJson(res, 400, { error: 'Missing machineModel' })
-        return
-      }
-      const reply = await runSupportChat(messages, machineModel, scope)
-      sendJson(res, 200, { reply })
-      return
+    let reply: string
+    try {
+      reply = await answer()
+    } catch (err) {
+      if (!(err instanceof Anthropic.AuthenticationError)) throw err
+      // The configured key was rejected — answer from the keyword fallback.
+      console.error('ANTHROPIC_API_KEY was rejected (401); using keyword fallback until redeployed with a valid key.')
+      aiKeyRejected = true
+      reply = await answer()
     }
-
-    sendJson(res, 400, { error: 'category must be "dealer", "products" or "support"' })
+    sendJson(res, 200, { reply })
   } catch (err) {
     if (err instanceof Error && err.message === 'unauthorized') {
       sendJson(res, 401, { error: 'Invalid or expired session' })
